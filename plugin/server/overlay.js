@@ -4,12 +4,24 @@
  * run (window.__CLAUDE_ANNOTATE__ carries endpoint + token). Everything lives in a
  * Shadow DOM on a host appended to <html>, so the page's CSS never touches it and ours
  * never leaks out. Document coordinates everywhere, so marks stay put while scrolling.
+ *
+ * ponytail: marks assume the window is the scroller. A page that scrolls <body> or a wrapper
+ * instead of the viewport keeps scrollX/Y at 0 and pins stick to the viewport. Upgrade path:
+ * anchor each mark to the nearest scroll container of its element.
  */
 (() => {
   if (window.top !== window) return; // never inside iframes
   const CFG = window.__CLAUDE_ANNOTATE__;
+  try { delete window.__CLAUDE_ANNOTATE__; } catch { window.__CLAUDE_ANNOTATE__ = undefined; } // the token never stays on the page
   if (!CFG || window.__claudeAnnotate) return;
+  // Local development hosts only: a third-party page in this profile must never see the bridge.
+  if (!isLocalHost(location.hostname)) return;
+  const F = window.fetch.bind(window), ES = window.EventSource; // taken before page scripts can patch them
   const RENDER_ONLY = !!CFG.renderOnly || !!window.__CLAUDE_ANNOTATE_RENDER_ONLY__;
+
+  function isLocalHost(h) {
+    return /^(localhost|127(\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})$/.test(h) || /\.(localhost|test|local|internal)$/.test(h);
+  }
 
   // ---------------------------------------------------------------------------
   // Constants
@@ -45,7 +57,7 @@
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
-  const api = { ready: false, version: CFG.version };
+  const api = { ready: false };
   window.__claudeAnnotate = api;
 
   const pageUrl = () => location.href;
@@ -69,7 +81,7 @@
   // ---------------------------------------------------------------------------
   const H = { "Content-Type": "application/json", "X-Annot-Token": CFG.token };
   const req = async (method, p, body) => {
-    const r = await fetch(CFG.endpoint + p, { method, headers: H, body: body ? JSON.stringify(body) : undefined });
+    const r = await F(CFG.endpoint + p, { method, headers: H, body: body ? JSON.stringify(body) : undefined });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || r.statusText);
     return j;
@@ -77,9 +89,10 @@
   let saveTimer = null;
   const save = () => {
     clearTimeout(saveTimer);
+    const url = pageUrl(); // not when the timer fires: an SPA navigation may happen in between
     saveTimer = setTimeout(async () => {
       try {
-        const r = await req("PUT", "/state", { url: pageUrl(), shapes, notes });
+        const r = await req("PUT", "/state", { url, shapes, notes });
         if (r.totals) { totals = r.totals; renderToolbar(); }
       } catch { setLink("off"); }
     }, 120);
@@ -88,17 +101,19 @@
   // ---------------------------------------------------------------------------
   // DOM scaffold
   // ---------------------------------------------------------------------------
-  let host, root, docLayer, svg, pinsLayer, chrome, bar, popover, toasts, ticker, rim;
+  let host, root, docLayer, svg, shapesG, draftG, pinsLayer, chrome, bar, popover, toasts, ticker, rim;
 
   const CSS = `
 :host { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483646; display: block; }
 *, *::before, *::after { box-sizing: border-box; }
-.doc { position: absolute; top: 0; left: 0; overflow: visible; }
+.doc { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
 svg.ink { position: absolute; top: 0; left: 0; display: block; overflow: visible; pointer-events: none; touch-action: none; }
 :host(.draw) svg.ink { pointer-events: auto; cursor: var(--cursor, crosshair); }
 :host(.draw.t-select) svg.ink { cursor: default; }
 svg.ink .hit { stroke: transparent; fill: none; stroke-width: 16; pointer-events: none; }
-:host(.draw.t-select) svg.ink .hit { pointer-events: stroke; cursor: pointer; }
+:host(.draw.t-select) svg.ink .hit { pointer-events: stroke; cursor: grab; }
+:host(.draw.t-select) svg.ink rect.hit, :host(.draw.t-select) svg.ink ellipse.hit { pointer-events: all; }
+:host(.dragging) svg.ink .hit, :host(.dragging) .pin .dot { cursor: grabbing !important; }
 :host(.draw.t-select) svg.ink g.shape:hover .halo { stroke: rgba(255,255,255,.55); }
 svg.ink g.shape.selected .halo { stroke: #fff; stroke-dasharray: 6 5; stroke-width: 7; }
 svg.ink .halo { fill: none; stroke: rgba(10,8,14,.42); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
@@ -109,13 +124,13 @@ svg.ink g.draft { opacity: .9; }
 :host(.capturing) .pin .tag { white-space: normal; width: max-content; max-width: 260px; border-radius: 12px; }
 :host(.capturing) .pin .dot { animation: none; }
 
-.pins { position: absolute; top: 0; left: 0; }
+.pins { position: absolute; top: 0; left: 0; pointer-events: none; }
 .pin { position: absolute; width: 0; height: 0; pointer-events: none; }
 .pin .dot {
   pointer-events: auto; position: absolute; left: -15px; top: -15px; width: 30px; height: 30px; border-radius: 999px;
-  display: grid; place-items: center; cursor: pointer; border: 0; padding: 0;
+  display: grid; place-items: center; cursor: grab; border: 0; padding: 0; touch-action: none;
   background: var(--ink); color: var(--ink-dark);
-  font: 700 13px/1 "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, sans-serif; font-variant-numeric: tabular-nums;
+  font: 700 13px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums;
   box-shadow: 0 0 0 2.5px rgba(20,17,26,.9), 0 8px 22px -8px rgba(0,0,0,.7);
   transition: transform .15s cubic-bezier(.2,.8,.2,1);
   animation: pop .3s cubic-bezier(.34,1.56,.64,1) both;
@@ -136,7 +151,7 @@ svg.ink g.draft { opacity: .9; }
   position: absolute; left: 20px; top: -13px; max-width: 220px; padding: 5px 10px 6px; border-radius: 999px;
   background: rgba(20,17,26,.86); color: #F4F1F7; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 0 1px rgba(255,255,255,.07), 0 10px 24px -12px rgba(0,0,0,.7);
-  font: 500 12.5px/1.25 "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif; letter-spacing: .005em;
+  font: 500 12.5px/1.25 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .005em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; cursor: pointer;
   animation: slide .3s cubic-bezier(.2,.8,.2,1) both;
 }
@@ -147,7 +162,7 @@ svg.ink g.draft { opacity: .9; }
 .pin .tag .res:empty { display: none; }
 .pin:has(.res:not(:empty)) .tag { white-space: normal; width: max-content; max-width: 260px; border-radius: 12px; padding: 7px 11px 8px; top: -15px; }
 
-.chrome { position: fixed; inset: 0; pointer-events: none; color: #F4F1F7; font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 13px; }
+.chrome { position: fixed; inset: 0; pointer-events: none; color: #F4F1F7; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; }
 .chrome > * { pointer-events: auto; }
 .rim { pointer-events: none; position: fixed; inset: 0; box-shadow: inset 0 0 0 3px var(--ink); opacity: 0; }
 .rim.flash { animation: rimflash .7s cubic-bezier(.2,.8,.2,1) both; }
@@ -176,7 +191,7 @@ svg.ink g.draft { opacity: .9; }
   padding: 4px 8px; border-radius: 8px; background: rgba(20,17,26,.95); color: #F4F1F7; font-size: 11.5px; font-weight: 600; white-space: nowrap;
   box-shadow: 0 0 0 1px rgba(255,255,255,.08); transition: opacity .15s, transform .15s cubic-bezier(.2,.8,.2,1); }
 .tb .kbd b { color: rgba(244,241,247,.5); font-weight: 600; margin-left: 6px; }
-.tb:hover .kbd { opacity: 1; transform: translate(-50%, 0); transition-delay: .35s; }
+.tb:hover .kbd, .tb:focus-visible .kbd { opacity: 1; transform: translate(-50%, 0); transition-delay: .35s; }
 .mode { position: relative; }
 .mode .st { position: absolute; right: 6px; top: 6px; width: 7px; height: 7px; border-radius: 999px; background: #6B6775; box-shadow: 0 0 0 2px rgba(20,17,26,1); }
 .mode.on .st, .mode .st { transition: background .3s; }
@@ -185,12 +200,12 @@ svg.ink g.draft { opacity: .9; }
 :host(.link-off) .mode .st { background: #FF5C5C; }
 :host(.browse) .mode { background: rgba(255,255,255,.12); color: #F4F1F7; }
 
-.inks { display: flex; gap: 4px; padding: 0 4px; }
+.inks { display: flex; gap: 9px; padding: 0 8px; }
 .inkb { width: 22px; height: 22px; border-radius: 999px; border: 0; padding: 0; cursor: pointer; background: var(--c);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 0 0 2px transparent; transition: transform .15s cubic-bezier(.2,.8,.2,1), box-shadow .15s; }
 .inkb:hover { transform: scale(1.12); }
 .inkb:active { transform: scale(.94); }
-.inkb.on { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 0 0 2px rgba(20,17,26,1), 0 0 0 3.5px var(--c); transform: scale(1.06); }
+.inkb.on { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 0 0 2px rgba(20,17,26,1), 0 0 0 3.5px var(--c); }
 .inkb:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 .send {
@@ -243,7 +258,7 @@ svg.ink g.draft { opacity: .9; }
 .pop .title { font-weight: 600; font-size: 12.5px; color: rgba(244,241,247,.72); flex: 1; }
 .pop .del { width: 26px; height: 26px; }
 .pop textarea { width: 100%; min-height: 60px; max-height: 180px; resize: none; border: 0; outline: 0; border-radius: 9px; padding: 9px 10px; margin: 0;
-  background: rgba(255,255,255,.06); color: #F4F1F7; font: 500 13.5px/1.4 "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); transition: box-shadow .15s; }
+  background: rgba(255,255,255,.06); color: #F4F1F7; font: 500 13.5px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); transition: box-shadow .15s; }
 .pop textarea:focus { box-shadow: inset 0 0 0 1.5px var(--ink); }
 .pop textarea::placeholder { color: rgba(244,241,247,.4); }
 .pop .hint { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; padding: 0 2px; font-size: 10.5px; color: rgba(244,241,247,.45); font-weight: 500; white-space: nowrap; }
@@ -285,6 +300,9 @@ svg.ink g.draft { opacity: .9; }
     docLayer = el("div", "doc");
     svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("class", "ink");
+    svg.innerHTML = '<g class="shapes"></g><g class="draftg"></g>';
+    shapesG = svg.firstElementChild;
+    draftG = svg.lastElementChild;
     docLayer.appendChild(svg);
     pinsLayer = el("div", "pins");
     docLayer.appendChild(pinsLayer);
@@ -294,10 +312,14 @@ svg.ink g.draft { opacity: .9; }
     rim = el("div", "rim");
     chrome.appendChild(rim);
     toasts = el("div", "toasts");
+    toasts.setAttribute("aria-live", "polite");
     chrome.appendChild(toasts);
     ticker = el("div", "ticker");
+    ticker.setAttribute("aria-live", "polite");
     chrome.appendChild(ticker);
     popover = el("div", "pop hidden");
+    popover.setAttribute("role", "dialog");
+    popover.setAttribute("aria-label", "Note");
     chrome.appendChild(popover);
     bar = el("div", "bar");
     bar.setAttribute("role", "toolbar");
@@ -307,15 +329,13 @@ svg.ink g.draft { opacity: .9; }
 
     document.documentElement.appendChild(host);
     if (RENDER_ONLY) host.classList.add("capturing");
-    loadFont();
     applyInk();
     setMode(mode);
     renderToolbar();
     sizeDoc();
     bindEvents();
     restoreBarPos();
-    api.ready = true;
-    hydrate();
+    hydrate().finally(() => { api.ready = true; }); // the server screenshots temp pages once ready
     connectSse();
   }
 
@@ -326,24 +346,15 @@ svg.ink g.draft { opacity: .9; }
     return e;
   }
 
-  function loadFont() {
-    if (document.getElementById("claude-annotate-font")) return;
-    const l = document.createElement("link");
-    l.id = "claude-annotate-font";
-    l.rel = "stylesheet";
-    l.href = "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&display=swap";
-    document.head.appendChild(l);
-  }
+
 
   // ---------------------------------------------------------------------------
   // Sizing / coordinates
   // ---------------------------------------------------------------------------
   function docSize() {
+    // Body, not <html>: our own layer is a child of <html> and would hold the old size forever.
     const d = document.documentElement, b = document.body;
-    return {
-      w: Math.max(d.scrollWidth, b ? b.scrollWidth : 0, innerWidth),
-      h: Math.max(d.scrollHeight, b ? b.scrollHeight : 0, innerHeight),
-    };
+    return { w: Math.max(b ? b.scrollWidth : 0, d.clientWidth), h: Math.max(b ? b.scrollHeight : 0, d.clientHeight) };
   }
   let lastSize = { w: 0, h: 0 };
   function sizeDoc() {
@@ -362,14 +373,10 @@ svg.ink g.draft { opacity: .9; }
   // Element context (what is under a point)
   // ---------------------------------------------------------------------------
   function elementAt(x, y) {
-    const prev = svg.style.pointerEvents;
-    svg.style.pointerEvents = "none";
-    host.style.visibility = "hidden";
-    let e = document.elementFromPoint(x - scrollX, y - scrollY);
+    host.style.visibility = "hidden"; // takes the host out of hit testing
+    const e = document.elementFromPoint(clamp(x - scrollX, 0, innerWidth - 1), clamp(y - scrollY, 0, innerHeight - 1));
     host.style.visibility = "";
-    svg.style.pointerEvents = prev;
-    if (!e || e === document.documentElement) return null;
-    return e;
+    return !e || e === document.documentElement ? null : e;
   }
   function shortSel(e) {
     if (!e || e.nodeType !== 1) return "";
@@ -393,7 +400,9 @@ svg.ink g.draft { opacity: .9; }
         else node = node.parentElement;
       }
       if (!fiber) return out;
-      const isLibFile = (file) => /node_modules|\/@|react-dom|react-refresh|chunk-|\.vite\//.test(file);
+      const isLibFile = (file) => /node_modules|\/@(?!fs\/)|react-dom|react-refresh|chunk-|\.vite\//.test(file);
+      // ponytail: React 19 line numbers are post-transform (esbuild-shifted under Vite, chunk
+      // offsets under Turbopack). The file is right, the line is a hint. React 18 is exact.
       // Where this fiber was created: React <19 keeps _debugSource, React 19 keeps the
       // owner stack. Returns { src, user } with src like "src/App.tsx:12".
       const callSite = (f) => {
@@ -426,15 +435,11 @@ svg.ink g.draft { opacity: .9; }
     return out;
   }
   function relPath(p) {
-    try {
-      const u = new URL(p, location.href);
-      p = u.pathname;
-    } catch { /* keep */ }
-    p = p.replace(/\?.*$/, "");
-    const i = p.indexOf("/src/");
-    if (i >= 0) return p.slice(i + 1);
-    return p.replace(/^\//, "");
+    if (!/^https?:/.test(p)) return p.replace(/^\/\.\//, ""); // FS path (React 18) or webpack-internal "/./app/page.tsx"
+    try { p = new URL(p).pathname; } catch { return p; } // Vite: drop origin and ?t=
+    return p.startsWith("/@fs/") ? p.slice(4) : p.replace(/^\//, ""); // /@fs/abs → /abs, /src/x.tsx → src/x.tsx
   }
+
   function describe(e) {
     if (!e || e === document.body || e === document.documentElement) return null;
     const r = e.getBoundingClientRect();
@@ -443,7 +448,7 @@ svg.ink g.draft { opacity: .9; }
     let p = e.parentElement;
     while (p && p !== document.body && chain.length < 3) { chain.unshift(shortSel(p)); p = p.parentElement; }
     return {
-      selector: shortSel(e), tag: e.tagName.toLowerCase(), text,
+      selector: shortSel(e), text,
       rect: [Math.round(r.left + scrollX), Math.round(r.top + scrollY), Math.round(r.width), Math.round(r.height)],
       chain: chain.join(" > "), react: reactInfo(e),
     };
@@ -456,14 +461,14 @@ svg.ink g.draft { opacity: .9; }
       const hasOwnText = (n) => [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim());
       const cands = [];
       for (const n of document.body.querySelectorAll("*")) {
-        if (n === host || host.contains(n) || n.closest("script,style,svg,claude-annotate")) continue;
+        if (n.closest("svg")) continue;
         const interactive = /^(BUTTON|A|INPUT|SELECT|TEXTAREA|IMG|LABEL)$/.test(n.tagName) || n.getAttribute("role") === "button";
         if (!interactive && !hasOwnText(n)) continue;
         const r = n.getBoundingClientRect();
         if (r.width <= 0 || r.height <= 0) continue;
         const nx = r.left + scrollX, ny = r.top + scrollY;
         if (nx >= x - 4 && ny >= y - 4 && nx + r.width <= x + w + 4 && ny + r.height <= y + h + 4) {
-          const t = (n.innerText || n.getAttribute("alt") || n.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 40);
+          const t = (n.textContent || n.getAttribute("alt") || n.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 40);
           const fs = parseFloat(getComputedStyle(n).fontSize) || 0;
           cands.push({ n, t, fs, area: r.width * r.height });
         }
@@ -545,8 +550,14 @@ svg.ink g.draft { opacity: .9; }
     return `<g class="${cls}${selected === s.id ? " selected" : ""}" data-id="${s.id}">${body}${hit}</g>`;
   }
   function renderInk() {
-    sizeDoc();
-    svg.innerHTML = shapes.map((s) => shapeSvg(s)).join("") + (draft ? shapeSvg(draft, "draft") : "");
+    shapesG.innerHTML = shapes.map((s) => shapeSvg(s)).join("");
+    renderDraft();
+    renderSelection();
+  }
+  function renderDraft() { draftG.innerHTML = draft ? shapeSvg(draft, "draft") : ""; }
+  function renderShape(s) { // one committed shape, while it is being moved
+    const g = shapesG.querySelector(`g.shape[data-id="${s.id}"]`);
+    if (g) g.outerHTML = shapeSvg(s); else renderInk();
     renderSelection();
   }
   let selBox = null;
@@ -568,7 +579,6 @@ svg.ink g.draft { opacity: .9; }
   // Pins
   // ---------------------------------------------------------------------------
   function renderPins() {
-    sizeDoc();
     const keep = selBox;
     pinsLayer.innerHTML = "";
     for (const n of notes) {
@@ -576,11 +586,17 @@ svg.ink g.draft { opacity: .9; }
       const p = el("div", `pin ${n.status || "draft"}`);
       p.dataset.id = n.id;
       p.style.cssText = `left:${n.x}px;top:${n.y}px;--ink:${inkDef.hex};--ink-dark:${inkDef.dark};--ink-soft:${inkDef.hex}55`;
-      const res = n.result ? `<span class="res">${esc(n.result)}</span>` : "";
-      p.innerHTML = `<span class="ring"></span><button class="dot" type="button" aria-label="Note ${n.n}"><span class="n">${n.n}</span>${svgIcon("check", 15)}</button><span class="tag" title="${esc(n.text)}"><span class="txt">${esc(n.text || "…")}</span>${res}</span>`;
+      p.innerHTML = `<span class="ring"></span><button class="dot" type="button" aria-label="Note ${n.n}"><span class="n">${n.n}</span>${svgIcon("check", 15)}</button><span class="tag" title="${esc(n.text)}">${tagHtml(n)}</span>`;
       pinsLayer.appendChild(p);
     }
     if (keep) pinsLayer.appendChild(keep);
+  }
+  function tagHtml(n) { return `<span class="txt">${esc(n.text || "…")}</span>${n.result ? `<span class="res">${esc(n.result)}</span>` : ""}`; }
+  function updatePin(n) {
+    const p = pinsLayer.querySelector(`.pin[data-id="${n.id}"]`);
+    if (!p) return renderPins();
+    p.className = `pin ${n.status || "draft"}`;
+    p.querySelector(".tag").innerHTML = tagHtml(n);
   }
   function wigglePins(stagger = 50) {
     [...pinsLayer.querySelectorAll(".pin .dot")].forEach((d, i) => {
@@ -605,10 +621,10 @@ svg.ink g.draft { opacity: .9; }
     const ta = popover.querySelector("textarea");
     ta.value = note.text || "";
     popover.classList.remove("hidden");
-    placePopover();
     const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(180, ta.scrollHeight) + "px"; };
     ta.addEventListener("input", grow);
     grow();
+    placePopover();
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
     ta.addEventListener("keydown", (e) => {
@@ -648,9 +664,11 @@ svg.ink g.draft { opacity: .9; }
     closePopover();
   }
   function closePopover() {
+    const was = popNote;
     popover.classList.add("hidden");
     popover.innerHTML = "";
     popNote = null;
+    if (was) { const d = pinsLayer.querySelector(`.pin[data-id="${was.id}"] .dot`); if (d) d.focus({ preventScroll: true }); }
   }
 
   // ---------------------------------------------------------------------------
@@ -662,6 +680,11 @@ svg.ink g.draft { opacity: .9; }
   function doUndo() { if (!undo.length) return; redo.push(snapshot()); restore(undo.pop()); }
   function doRedo() { if (!redo.length) return; undo.push(snapshot()); restore(redo.pop()); }
   function addShape(s) { pushUndo(); s.ctx = ctxForShape(s); shapes.push(s); renderInk(); save(); }
+  function translateShape(s, o, dx, dy) {
+    if (s.type === "pen") s.points = o.points.map(([x, y]) => [x + dx, y + dy]);
+    else if (s.type === "arrow") { s.x1 = o.x1 + dx; s.y1 = o.y1 + dy; s.x2 = o.x2 + dx; s.y2 = o.y2 + dy; }
+    else { s.x = o.x + dx; s.y = o.y + dy; }
+  }
   function deleteSelected() {
     if (!selected) return;
     pushUndo();
@@ -676,20 +699,24 @@ svg.ink g.draft { opacity: .9; }
     renderPins();
     save();
   }
+  let creating = false;
   async function createNote(x, y) {
-    let n;
-    try { n = (await req("POST", "/note/next")).n; } catch { n = Math.max(0, ...notes.map((k) => k.n)) + 1; }
-    const note = { id: uid(), n, x, y, color: ink.id, text: "", status: "draft", ctx: ctxAtPoint(x, y), batch: null };
-    notes.push(note);
-    renderPins();
-    openPopover(note, true);
+    if (creating) return;
+    creating = true;
+    try {
+      let n;
+      try { n = (await req("POST", "/note/next")).n; } catch { n = Math.max(0, ...notes.map((k) => k.n)) + 1; }
+      const note = { id: uid(), n, x, y, color: ink.id, text: "", status: "draft", ctx: ctxAtPoint(x, y), batch: null };
+      notes.push(note);
+      renderPins();
+      openPopover(note, true);
+    } finally { creating = false; }
   }
   async function clearAll() {
     pushUndo();
     shapes = []; notes = []; selected = null; phase = "idle";
     renderInk(); renderPins(); renderToolbar();
-    try { await req("POST", "/clear"); } catch { /* server will say */ }
-    toast("Cleared. Fresh page.", "ok");
+    try { await req("POST", "/clear"); toast("Cleared. Fresh page.", "ok"); } catch (e) { toast(e.message === "busy" ? "Still sending, clear again in a moment." : `Couldn't clear: ${e.message}`); }
   }
 
   // ---------------------------------------------------------------------------
@@ -722,7 +749,7 @@ svg.ink g.draft { opacity: .9; }
     host.classList.toggle("link-off", s === "off");
   }
   function sendLabel() {
-    const unsent = totals.unsent + notes.filter((n) => !n.batch).length * 0; // totals already include this page after save
+    const unsent = totals.unsent;
     if (phase === "sending") return { label: "Sending…", cls: "sending", disabled: true };
     if (phase === "sent" && totals.open > 0 && unsent === 0) return { label: "Claude is on it", cls: "sent", disabled: true };
     if (phase === "done" && unsent === 0) return { label: "All done", cls: "done", disabled: true };
@@ -730,12 +757,13 @@ svg.ink g.draft { opacity: .9; }
     if (totals.batches > 0 && unsent > 0) return { label: `Send ${unsent} more`, cls: "", disabled: false, count: unsent };
     return { label: "Send to Claude", cls: "", disabled: false, count: unsent };
   }
+  let lastBar = "";
   function renderToolbar() {
     if (!bar) return;
     const s = sendLabel();
     const btn = (name, title, key, extra = "") =>
       `<button class="tb ${extra}" type="button" data-${name.startsWith("act:") ? "act" : "tool"}="${name.replace("act:", "")}" aria-label="${title}">${svgIcon(name.replace("act:", "") === "undo" ? "undo" : name.replace("act:", ""))}<span class="kbd">${title}${key ? `<b>${key}</b>` : ""}</span></button>`;
-    bar.innerHTML = `
+    const html = `
       <span class="grip" title="Drag">${svgIcon("grip", 16)}</span>
       <button class="tb mode${mode === "browse" ? " on" : ""}" type="button" data-act="mode" aria-label="Browse the page">${svgIcon("hand")}<span class="st"></span><span class="kbd">${mode === "browse" ? "Back to drawing" : "Browse the page"}<b>V · esc</b></span></button>
       <span class="sep"></span>
@@ -752,6 +780,7 @@ svg.ink g.draft { opacity: .9; }
       <span class="sep"></span>
       <button class="send ${s.cls}" type="button" data-act="send" ${s.disabled ? "disabled" : ""}><span class="live"></span><span class="label">${s.label}</span>${s.count || s.cls === "done" ? `<span class="cnt"><span class="num">${s.count || ""}</span>${svgIcon("check", 13)}</span>` : ""}</button>
       <button class="tb danger${clearArmed ? " armed" : ""}${phase === "done" && !clearArmed ? " glow" : ""}" type="button" data-act="clear" aria-label="Clear everything">${svgIcon("trash")}${clearArmed ? "<span>Sure?</span>" : `<span class="kbd">Clear all pages</span>`}</button>`;
+    if (html !== lastBar) { lastBar = html; bar.innerHTML = html; }
   }
 
   // ---------------------------------------------------------------------------
@@ -784,13 +813,15 @@ svg.ink g.draft { opacity: .9; }
       e.preventDefault();
     });
     bar.addEventListener("pointermove", (e) => { if (start) placeBar(e.clientX - start.dx, e.clientY - start.dy); });
-    bar.addEventListener("pointerup", () => {
+    const stop = () => {
       if (!start) return;
       start = null;
       bar.classList.remove("dragging");
       const r = bar.getBoundingClientRect();
       try { localStorage.setItem(POS_KEY, JSON.stringify({ x: r.left, y: r.top })); } catch { /* ignore */ }
-    });
+    };
+    bar.addEventListener("pointerup", stop);
+    bar.addEventListener("pointercancel", stop);
   }
 
   // ---------------------------------------------------------------------------
@@ -819,13 +850,37 @@ svg.ink g.draft { opacity: .9; }
     svg.addEventListener("pointercancel", onUp);
     svg.addEventListener("contextmenu", (e) => { if (mode === "draw") e.preventDefault(); });
 
-    // Pins
-    pinsLayer.addEventListener("click", (e) => {
+    // Pins: press opens the note, drag moves it (any mode)
+    pinsLayer.addEventListener("pointerdown", (e) => {
+      const handle = e.target.closest(".dot, .tag");
       const pin = e.target.closest(".pin");
-      if (!pin) return;
+      if (!handle || !pin || e.button !== 0) return;
       const n = notes.find((k) => k.id === pin.dataset.id);
-      if (n) openPopover(n, false);
+      if (!n) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const [x, y] = toDoc(e);
+      drag = { kind: "pin", n, pin, ox: n.x, oy: n.y, x, y, before: snapshot(), moved: false };
+      handle.setPointerCapture(e.pointerId);
     });
+    pinsLayer.addEventListener("pointermove", (e) => {
+      if (!drag || drag.kind !== "pin") return;
+      const [x, y] = toDoc(e);
+      const dx = x - drag.x, dy = y - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+      if (!drag.moved) { drag.moved = true; host.classList.add("dragging"); closePopover(); }
+      drag.n.x = Math.round(drag.ox + dx); drag.n.y = Math.round(drag.oy + dy);
+      drag.pin.style.left = drag.n.x + "px"; drag.pin.style.top = drag.n.y + "px";
+    });
+    const endPinDrag = () => {
+      if (!drag || drag.kind !== "pin") return;
+      const d = drag; drag = null;
+      host.classList.remove("dragging");
+      if (d.moved) { undo.push(d.before); if (undo.length > 60) undo.shift(); redo.length = 0; d.n.ctx = ctxAtPoint(d.n.x, d.n.y); renderPins(); save(); renderToolbar(); }
+      else openPopover(d.n, false);
+    };
+    pinsLayer.addEventListener("pointerup", endPinDrag);
+    pinsLayer.addEventListener("pointercancel", endPinDrag);
 
     // Keyboard
     window.addEventListener("keydown", onKey, true);
@@ -836,7 +891,12 @@ svg.ink g.draft { opacity: .9; }
     const ro = new ResizeObserver(() => sizeDoc());
     ro.observe(document.documentElement);
     if (document.body) ro.observe(document.body);
-    setInterval(sizeDoc, 1500);
+    setInterval(() => {
+      if (!host.isConnected) document.documentElement.appendChild(host); // hydration or innerHTML replaced <html>'s children
+      ro.observe(document.documentElement);
+      if (document.body) ro.observe(document.body); // idempotent; re-arms after a body swap
+      sizeDoc();
+    }, 1500);
 
     // SPA navigation: same document, new URL → reload state for the new URL
     const fire = () => setTimeout(onUrlChange, 50);
@@ -865,6 +925,12 @@ svg.ink g.draft { opacity: .9; }
       const g = e.composedPath().find((n) => n instanceof Element && n.classList && n.classList.contains("shape"));
       selected = g ? g.dataset.id : null;
       renderInk();
+      if (selected) {
+        const s = shapes.find((k) => k.id === selected);
+        drag = { kind: "shape", s, orig: JSON.parse(JSON.stringify(s)), x, y, before: snapshot(), moved: false };
+        svg.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      }
       return;
     }
     e.preventDefault();
@@ -872,9 +938,21 @@ svg.ink g.draft { opacity: .9; }
     if (tool === "pen") draft = { id: uid(), type: "pen", color: ink.id, points: [[x, y]] };
     else if (tool === "arrow") draft = { id: uid(), type: "arrow", color: ink.id, x1: x, y1: y, x2: x, y2: y };
     else draft = { id: uid(), type: tool, color: ink.id, x, y, w: 0, h: 0, _ox: x, _oy: y };
-    renderInk();
+    sizeDoc();
+    renderDraft();
   }
+  let drag = null; // { kind: "shape"|"pin", ... } while something is being moved
   function onMove(e) {
+    if (drag && drag.kind === "shape") {
+      const [x, y] = toDoc(e);
+      const dx = x - drag.x, dy = y - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+      drag.moved = true;
+      host.classList.add("dragging");
+      translateShape(drag.s, drag.orig, dx, dy);
+      renderShape(drag.s);
+      return;
+    }
     if (!draft) return;
     const [x, y] = toDoc(e);
     if (draft.type === "pen") {
@@ -886,16 +964,22 @@ svg.ink g.draft { opacity: .9; }
       draft.w = Math.abs(x - draft._ox); draft.h = Math.abs(y - draft._oy);
       if (e.shiftKey) { const m = Math.max(draft.w, draft.h); draft.w = draft.h = m; }
     }
-    renderInk();
+    renderDraft();
   }
   function onUp() {
+    if (drag && drag.kind === "shape") {
+      const d = drag; drag = null;
+      host.classList.remove("dragging");
+      if (d.moved) { undo.push(d.before); if (undo.length > 60) undo.shift(); redo.length = 0; d.s.ctx = ctxForShape(d.s); renderInk(); save(); renderToolbar(); }
+      return;
+    }
     if (!draft) return;
     const d = draft; draft = null;
     let ok = false;
     if (d.type === "pen") ok = d.points.length >= 3;
     else if (d.type === "arrow") ok = Math.hypot(d.x2 - d.x1, d.y2 - d.y1) >= 12;
     else { ok = d.w >= 8 && d.h >= 8; delete d._ox; delete d._oy; }
-    if (ok) addShape(d); else renderInk();
+    if (ok) addShape(d); else renderDraft();
   }
   function onKey(e) {
     if (RENDER_ONLY) return;
@@ -909,7 +993,7 @@ svg.ink g.draft { opacity: .9; }
     if (meta && e.key === "Enter") { e.preventDefault(); send(); return; }
     if (meta || e.altKey) return;
     const k = e.key.toLowerCase();
-    if (e.key === "Escape") { if (clearArmed) { disarmClear(); } else setMode(mode === "draw" ? "browse" : "draw"); return; }
+    if (e.key === "Escape") { if (clearArmed) disarmClear(); else if (mode === "draw") setMode("browse"); return; } // never steals the page's own Escape
     if (mode === "browse" && !(k in KEYS) && k !== "v") return;
     if (k === "v") { setMode(mode === "draw" ? "browse" : "draw"); return; }
     if (k in KEYS) { setTool(KEYS[k]); return; }
@@ -923,10 +1007,10 @@ svg.ink g.draft { opacity: .9; }
   async function send() {
     if (phase === "sending") return;
     if (!popover.classList.contains("hidden")) commitPopover();
-    clearTimeout(saveTimer);
-    try { await req("PUT", "/state", { url: pageUrl(), shapes, notes }); } catch { /* fallthrough */ }
     phase = "sending";
     renderToolbar();
+    clearTimeout(saveTimer);
+    try { await req("PUT", "/state", { url: pageUrl(), shapes, notes }); } catch { /* fallthrough */ }
     try {
       const r = await req("POST", "/send");
       for (const n of notes) if (!n.batch) { n.batch = r.batch; n.status = "pending"; }
@@ -938,13 +1022,12 @@ svg.ink g.draft { opacity: .9; }
       wigglePins();
       rim.classList.remove("flash"); void rim.offsetWidth; rim.classList.add("flash");
       const where = r.pages > 1 ? ` across ${r.pages} pages` : "";
-      if (r.pushed) toast(`Sent ${r.notes} note${r.notes === 1 ? "" : "s"}${where}. Claude is on it.`, "ok");
-      else if (r.mode === "poll") toast(`Sent${where}. Claude picks it up in the session.`, "ok");
-      else toast(`Sent${where}. If Claude doesn't react, type /annotate pull in the session.`, "ok");
+      const what = `Sent ${r.notes} note${r.notes === 1 ? "" : "s"}${where}.`;
+      toast(r.mode === "poll" ? `${what} Claude picks it up in the session.` : `${what} Nothing happening in the session? Type /annotate pull.`, "ok");
     } catch (e) {
       phase = "idle";
       renderToolbar();
-      toast(e.message === "Nothing to send yet." ? "Draw something or drop a note first." : `Couldn't send: ${e.message}`);
+      toast(e.message === "Nothing to send yet." ? "Draw something or drop a note first." : e.message === "busy" ? "Still sending the last batch, one moment." : `Couldn't send: ${e.message}`);
     }
   }
   function armClear() {
@@ -986,7 +1069,7 @@ svg.ink g.draft { opacity: .9; }
   }
   function connectSse() {
     setLink("connecting");
-    sse = new EventSource(`${CFG.endpoint}/events?t=${CFG.token}`);
+    sse = new ES(`${CFG.endpoint}/events?t=${CFG.token}`);
     sse.onopen = () => setLink("on");
     sse.onerror = () => setLink("off");
     sse.onmessage = (ev) => {
@@ -995,19 +1078,19 @@ svg.ink g.draft { opacity: .9; }
         case "hello": setLink("on"); if (m.totals) { totals = m.totals; renderToolbar(); } break;
         case "progress": {
           const n = notes.find((k) => k.n === m.n);
-          if (n) { n.status = m.status; if (m.message) n.result = m.message; renderPins(); }
+          if (n) { n.status = m.status; if (m.message) n.result = m.message; updatePin(n); }
           tick(m.status === "working" ? `working on note ${m.n}` : m.status === "done" ? `note ${m.n} done${m.message ? " · " + m.message : ""}` : `note ${m.n} skipped${m.message ? " · " + m.message : ""}`);
           if (m.status === "done") { const d = pinsLayer.querySelector(`.pin[data-id="${n ? n.id : ""}"] .dot`); if (d) d.classList.add("wiggle"); }
           break;
         }
         case "status": tick(m.text, true); break;
         case "toast": toast(m.text); break;
-        case "sent": if (m.mode) { /* another page sent */ } hydrate(); break;
+        case "sent": if (!draft && !popNote && !drag) hydrate(); break; // another tab sent; don't clobber work in progress
         case "done":
-          for (const n of notes) if (n.batch && (n.status === "pending" || n.status === "working")) n.status = "done";
+          for (const n of notes) if (n.batch && (!m.batch || n.batch === m.batch) && (n.status === "pending" || n.status === "working")) { n.status = "done"; updatePin(n); }
           phase = "done";
           totals.open = 0;
-          renderPins(); renderToolbar();
+          renderToolbar();
           toast(m.summary ? `Done. ${m.summary}` : "Done.", "ok");
           wigglePins(70);
           break;
@@ -1024,16 +1107,10 @@ svg.ink g.draft { opacity: .9; }
   // Public hooks for the server
   // ---------------------------------------------------------------------------
   api.capture = (on) => { if (!host) return; host.classList.toggle("capturing", !!on); if (on) { closePopover(); selected = null; renderSelection(); } };
-  api.state = () => ({ url: pageUrl(), shapes, notes });
-  api.setMode = setMode;
 
   // ---------------------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------------------
-  const boot = () => {
-    if (document.documentElement && document.body) mount();
-    else document.addEventListener("DOMContentLoaded", mount, { once: true });
-  };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once: true });
-  else boot();
+  else mount();
 })();

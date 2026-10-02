@@ -81,7 +81,7 @@ Per note that is: your text, the element under the pin with its visible text and
 | **Notes** | `N` then click. Type, `↵`. Numbered across all pages. Click a pin to edit or delete. |
 | **Browse** | `V` or `esc` passes clicks through to the page, so you can open a menu, change route, log in. Pins stay. |
 | **Across pages** | Marks are stored per URL. Navigate away and back and they are still there. One Send covers every page. |
-| **Select** | `S`, click a mark, `⌫`. `⌘Z` and `⇧⌘Z` for undo and redo. |
+| **Select** | `S`, click a mark to select it, drag to move it, `⌫` to delete. Pins drag in any mode. `⌘Z` and `⇧⌘Z` for undo and redo. |
 | **Send** | `⌘↵` or the button. It counts what hasn't been sent yet, so you can send, keep drawing, send again. |
 | **Progress** | Pin spins: Claude is on that note. Green with a line: done. Grey: skipped, with why. The toolbar shows which file Claude is editing. |
 | **Clear** | Two clicks (the second one says *Sure?*). Removes every mark on every page and the temporary screenshots. |
@@ -94,7 +94,7 @@ Pasting a screenshot and describing it works, and it is what this replaces. Each
 
 | Tool | Where you annotate | How it reaches Claude Code |
 |---|---|---|
-| **annotate** (this) | Its own Chrome window, any site, drawing and notes | Pushed into the running session on Send; progress and results come back onto the page |
+| **annotate** (this) | Its own Chrome window, any local site, drawing and notes | Pushed into the running session on Send; progress and results come back onto the page |
 | [tomreinert/claude-annotate](https://github.com/tomreinert/claude-annotate) | A Playwright window, drawing only | Pushed into the session; a toast comes back |
 | [browser-annotations](https://github.com/wiebekaai/browser-annotations) | A Chrome DevTools panel, pick an element, write feedback | Pushed into the session |
 | [Agentation](https://github.com/benjitaylor/agentation) | A toolbar you mount in your React app | Claude polls an MCP server, or you paste |
@@ -109,7 +109,9 @@ One Node process per session, spawned by Claude Code as an MCP server. It does t
 
 1. **Browser.** On `/annotate <url>` it launches the Chrome you already have through `playwright-core`, with its own profile under `~/.cache/claude-annotate/`, and injects `plugin/server/overlay.js` into every page before the page's own scripts run. The overlay is a Shadow DOM on a host appended to `<html>`: the page's CSS never reaches it, and its CSS never reaches the page. Marks live in document coordinates, so they stay put while you scroll. No change to your app, no extension, no build step.
 2. **Bridge.** The overlay talks to the process over a local HTTP port with a per-session token. State is kept per URL on the server, which is why navigation keeps your marks and a reload restores them. A `PostToolUse` hook posts the file Claude just edited, and tool results, toasts and the done summary stream back to the page over server-sent events.
-3. **Channel.** On Send, the process screenshots every annotated page (pages that aren't open right now get rendered in a hidden tab), clusters nearby marks into crops, writes the PNGs to a temp dir, and pushes one `notifications/claude/channel` event into the session. Claude reads the files, edits the code, and calls `annotate_progress` per note and `annotate_done` at the end, which deletes the PNGs.
+3. **Channel.** On Send, the process screenshots every annotated page (pages that aren't open right now get rendered in a temporary tab), clusters nearby marks into crops, writes the PNGs to a temp dir, and pushes one `notifications/claude/channel` event into the session. Claude reads the files, edits the code, and calls `annotate_progress` per note and `annotate_done` at the end, which deletes the PNGs.
+
+The overlay mounts on local development hosts only (localhost, 127.0.0.1, private IPs, `*.localhost`, `*.test`, `*.local`, `*.internal`) and takes the bridge token off the page before any page script runs, so a third-party site opened in that window never sees it. `annotate_open` refuses other hosts.
 
 <p align="center"><img alt="Mid-batch: a toast says Sent 3 notes, Claude is on it. Pin 1 pulses with a spinning ring while the ticker above the toolbar reads working on note 1. The Send button has turned into a breathing Claude is on it." src="assets/working.png" width="1440"></p>
 
@@ -134,12 +136,12 @@ Without the flag everything still works except the push:
 
 | Path | What | When it goes away |
 |---|---|---|
-| `$TMPDIR/claude-annotate/<session>/batch-N/*.png` | Crops and the full-page overview for one batch | When Claude calls done, on Clear, when the session ends; anything older than a day is pruned at startup |
+| `$TMPDIR/claude-annotate/<session>/batch-N/*.png` | Crops and the full-page overview for one batch | When Claude calls done, on Clear, when the session ends. macOS purges what a crash leaves after three days |
 | `~/.cache/claude-annotate/chrome-profile/` | The Chrome profile the annotation window uses (cookies, logins for your localhost apps) | Stays. Delete it to start fresh. A second concurrent session gets a throwaway profile that is removed on exit |
 | `~/.cache/claude-annotate/sessions/<pid>.json` | The bridge port and token, so the hook can find its session | When the session ends; stale ones are pruned at startup |
 | `localStorage` of the annotated site | Where you dragged the toolbar | Never, it's one key |
 
-The bridge listens on `127.0.0.1` only and every request needs the session token. The server makes no outbound connections. The overlay loads one Google Font for its own UI and nothing else.
+The bridge listens on `127.0.0.1` only and every request needs the session token. Neither the server nor the overlay makes an outbound connection.
 
 ## FAQ
 
@@ -147,9 +149,9 @@ The bridge listens on `127.0.0.1` only and every request needs the session token
 
 **Does it work on a site that isn't React?** Yes. You get the element, its visible text, the DOM path and the screenshots. Component names and source lines are React-only, and only in development builds.
 
-**What about a page behind a login?** The annotation window has its own Chrome profile that persists, so log in once. Claude's hidden tabs for other pages share the same profile.
+**What about a page behind a login?** The annotation window has its own Chrome profile that persists, so log in once. Claude's temporary tabs for other pages share the same profile.
 
-**Claude didn't react to Send.** Type `/annotate pull`. If a batch comes back, the session was started without the channel flag: restart with it, or use `--poll` next time. The toast on the page tells you which case you're in.
+**Claude didn't react to Send.** Type `/annotate pull`. If a batch comes back, the session was started without the channel flag: restart with it, or use `--poll` next time. The server cannot tell whether the flag was given, so the page can't warn you; the pull is the check.
 
 **Two Claude Code sessions, two annotate windows?** Yes. Each session has its own server, port, token and batch directory. The second window gets a throwaway Chrome profile because Chrome allows one process per profile.
 
@@ -167,11 +169,11 @@ npm test                                        # syntax, MCP handshake, bridge,
 claude --plugin-dir ./plugin --dangerously-load-development-channels plugin:annotate@claude-annotate
 ```
 
-`ANNOTATE_DEBUG=1` adds an `annotate_debug` tool that drives the browser (mouse, keys, eval, viewport), which is how the screenshots in this README were staged against a real app. `ANNOTATE_PORT` pins the bridge port.
+`ANNOTATE_DEBUG=1` adds an `annotate_debug` tool that drives the browser (mouse, keys, eval, viewport), which is how the screenshots in this README were staged against a real app.
 
 Layout: `plugin/server/index.mjs` is the whole server, `plugin/server/overlay.js` the whole overlay, `plugin/commands/annotate.md` what Claude does, `plugin/hooks/hooks.json` and `plugin/scripts/ticker.mjs` the file ticker. Two runtime dependencies: `@modelcontextprotocol/sdk` and `playwright-core`.
 
-Not there yet: moving a mark after drawing it, marks inside iframes, attaching an image to a note, a mobile viewport preset, and a channel allowlisting so the flag can go.
+Not there yet: marks inside iframes, pages that scroll a wrapper instead of the window, attaching an image to a note, a mobile viewport preset, and a channel allowlisting so the flag can go.
 
 To have an agent do the setup, point it at [INSTALL.md](INSTALL.md).
 

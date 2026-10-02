@@ -44,7 +44,10 @@ console.log("✓ 9 tools, no debug tool without ANNOTATE_DEBUG");
 const pull = await client.callTool({ name: "annotate_pull", arguments: {} });
 assert.match(pull.content[0].text, /"status": "empty"/);
 await assert.rejects(client.callTool({ name: "annotate_open", arguments: { url: "ftp://nope" } }), /http/, "rejects non-http urls");
-console.log("✓ pull is empty, bad url rejected");
+await assert.rejects(client.callTool({ name: "annotate_open", arguments: { url: "https://example.com/" } }), /local development hosts only/, "rejects non-local hosts");
+const waited = await client.callTool({ name: "annotate_wait", arguments: { timeout_s: 5 } });
+assert.match(waited.content[0].text, /"status": "closed"/, "wait reports closed when no browser is open");
+console.log("✓ pull is empty, bad and non-local urls rejected, wait says closed");
 
 // Session file for the hook, keyed by the parent pid (this process).
 const sessions = path.join(os.homedir(), ".cache", "claude-annotate", "sessions");
@@ -54,11 +57,10 @@ assert.ok(fs.existsSync(sessionFile), "session file written");
 const { endpoint, token } = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
 assert.match(endpoint, /^http:\/\/127\.0\.0\.1:\d+$/);
 
-const unauth = await fetch(`${endpoint}/health`);
+const unauth = await fetch(`${endpoint}/state?url=x`);
 assert.equal(unauth.status, 403, "bridge needs the token");
-const health = await (await fetch(`${endpoint}/health`, { headers: { "X-Annot-Token": token } })).json();
-assert.equal(health.ok, true);
-assert.equal(health.mode, "channel");
+const viaQuery = await fetch(`${endpoint}/state?url=x&t=${token}`);
+assert.equal(viaQuery.status, 403, "query token only works for /events");
 const H = { "Content-Type": "application/json", "X-Annot-Token": token };
 const url = "http://localhost:1/";
 const put = await (await fetch(`${endpoint}/state`, { method: "PUT", headers: H, body: JSON.stringify({ url, shapes: [{ id: "s", type: "rect", color: "pink", x: 1, y: 1, w: 10, h: 10 }], notes: [{ id: "n", n: 1, x: 2, y: 2, color: "pink", text: "hi" }] }) })).json();
@@ -67,12 +69,27 @@ const next = await (await fetch(`${endpoint}/note/next`, { method: "POST", heade
 assert.equal(next.n, 2, "note numbering continues after the highest stored note");
 const got = await (await fetch(`${endpoint}/state?url=${encodeURIComponent(url)}`, { headers: H })).json();
 assert.equal(got.notes[0].text, "hi");
-console.log("✓ bridge: token gate, state round trip, note numbering");
+assert.equal(got.mode, "channel");
+await client.callTool({ name: "annotate_progress", arguments: { note: 1, status: "working" } });
+const after = await (await fetch(`${endpoint}/state?url=${encodeURIComponent(url)}`, { headers: H })).json();
+assert.equal(after.notes[0].status, "working", "progress mutates the stored note");
+console.log("✓ bridge: token gate, state round trip, note numbering, progress");
 
-// The hook finds the session by parent pid and posts a status line.
+// The hook finds the session by parent pid and posts a status line: watch it arrive on the SSE stream.
+const events = await fetch(`${endpoint}/events?t=${token}`);
+const reader = events.body.getReader();
+const dec = new TextDecoder();
 const hook2 = spawnSync(process.execPath, [path.join(root, "scripts/ticker.mjs")], { input: JSON.stringify({ tool_name: "Write", cwd: root, tool_input: { file_path: path.join(root, "src/x.ts") } }), encoding: "utf8" });
 assert.equal(hook2.status, 0);
-console.log("✓ hook reaches the bridge");
+let seen = "";
+for (let i = 0; i < 20 && !/wrote src\/x\.ts/.test(seen); i++) {
+  const { value, done } = await Promise.race([reader.read(), sleep(200).then(() => ({ value: null, done: false }))]);
+  if (done) break;
+  if (value) seen += dec.decode(value);
+}
+assert.match(seen, /wrote src\/x\.ts/, `hook status reached the page stream:\n${seen}`);
+await reader.cancel().catch(() => {});
+console.log("✓ hook reaches the bridge and the page");
 
 await client.close();
 for (let i = 0; i < 50 && fs.existsSync(sessionFile); i++) await sleep(100);

@@ -21,7 +21,7 @@ Inside a Claude Code session:
 
 Choose **user** scope when asked, so it's available in every project. If the marketplace was cloned locally instead, pass the directory: `/plugin marketplace add /path/to/claude-annotate`.
 
-The first `/annotate` runs `npm ci` inside the plugin directory to fetch the two dependencies. That takes a few seconds once.
+The first session that starts after the install runs `npm ci` inside the plugin directory to fetch the two dependencies, because Claude Code spawns the plugin's server at session start. That takes a few seconds once. If `/mcp` shows annotate as failed right after installing, start a new session.
 
 ## 3. Start the session with the channel flag
 
@@ -49,9 +49,9 @@ With a dev server running, in the session:
 /annotate http://localhost:3000/
 ```
 
-Expected: a Chrome window opens on that URL with a floating toolbar at the bottom and a green dot on the hand icon. Press `N`, click anywhere, type a word, press `↵`, then click **Send to Claude**. The session should receive a channel event within a few seconds and Claude should read a PNG path from it. The page shows a toast "Sent 1 note. Claude is on it."
+Expected: a Chrome window opens on that URL with a floating toolbar at the bottom and a green dot on the hand icon. Press `N`, click anywhere, type a word, press `↵`, then click **Send to Claude**. The session should receive a channel event within a few seconds and Claude should read a PNG path from it. The page shows a toast starting with "Sent 1 note."
 
-If the toast says "If Claude doesn't react, type /annotate pull", the channel is not active in this session: go back to step 3.
+If nothing arrives in the session within a few seconds, type `/annotate pull`. If a batch comes back, the channel is not active in this session: go back to step 3.
 
 ## 5. Clean up
 

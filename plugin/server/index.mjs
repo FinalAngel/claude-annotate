@@ -36,7 +36,6 @@ const SESSIONS_DIR = path.join(CACHE_DIR, "sessions");
 const SHOTS_ROOT = path.join(os.tmpdir(), "claude-annotate");
 const SHOTS_DIR = path.join(SHOTS_ROOT, SESSION);
 const OVERLAY_SRC = fs.readFileSync(path.join(__dirname, "overlay.js"), "utf8");
-const FIXED_PORT = process.env.ANNOTATE_PORT ? Number(process.env.ANNOTATE_PORT) : 0;
 const BROWSER_CHANNEL = process.env.ANNOTATE_BROWSER || "chrome"; // chrome | msedge | chromium
 
 // ---------------------------------------------------------------------------
@@ -48,10 +47,11 @@ const state = {
   nextNote: 1,
   batchSeq: 0,
   batches: [], // { id, dir, content, notes, pages, createdAt, done }
-  pending: null, // last batch not yet pulled/acknowledged (poll mode + safety net)
+  pending: [], // batches sent but not yet pulled/handled (poll mode + safety net)
   waiters: [],
   listeners: new Set(),
   lastUrl: null,
+  sending: false, // one Send (or Clear) at a time; the build takes seconds
 };
 
 let endpoint = null;
@@ -79,8 +79,13 @@ function bootstrapSource(renderOnly = false) {
   return `window.__CLAUDE_ANNOTATE__ = ${JSON.stringify({ endpoint, token: TOKEN, renderOnly, version: VERSION })};\n${OVERLAY_SRC}`;
 }
 
-async function ensureBrowser() {
-  if (context) return context;
+let launching = null;
+function ensureBrowser() {
+  if (context) return Promise.resolve(context);
+  if (!launching) launching = launchBrowser().finally(() => { launching = null; });
+  return launching;
+}
+async function launchBrowser() {
   await ready;
   await fsp.mkdir(PROFILE_DIR, { recursive: true });
   const opts = {
@@ -90,24 +95,22 @@ async function ensureBrowser() {
     args: ["--window-size=1440,1000", "--no-first-run", "--no-default-browser-check", "--disable-infobars"],
   };
   if (BROWSER_CHANNEL !== "chromium") opts.channel = BROWSER_CHANNEL;
-  let lastErr = null;
   try {
     context = await chromium.launchPersistentContext(PROFILE_DIR, opts);
-  } catch (e) {
-    lastErr = e;
-    if (/already in use|existing browser session/i.test(e.message)) {
-      // Another session owns the shared profile: use a throwaway one for this session.
-      sessionProfile = `${PROFILE_DIR}-${SESSION}`;
-      await fsp.mkdir(sessionProfile, { recursive: true });
-      log("shared chrome profile is busy, using a session profile");
-      try { context = await chromium.launchPersistentContext(sessionProfile, opts); } catch (e2) { lastErr = e2; }
+  } catch (first) {
+    // Usually: another session holds the shared profile. Chrome's message for that varies,
+    // so retry on a throwaway profile; a second failure is the real error (no browser).
+    sessionProfile = `${PROFILE_DIR}-${SESSION}`;
+    await fsp.mkdir(sessionProfile, { recursive: true });
+    log(`shared profile launch failed (${String(first.message).split("\n")[0]}), retrying with a session profile`);
+    try {
+      context = await chromium.launchPersistentContext(sessionProfile, opts);
+    } catch (second) {
+      throw new Error(
+        `Could not launch ${BROWSER_CHANNEL}. Install Google Chrome, or set ANNOTATE_BROWSER=msedge, ` +
+          `or run "npx playwright install chromium" and set ANNOTATE_BROWSER=chromium. (${String(second.message).split("\n")[0]})`,
+      );
     }
-  }
-  if (!context) {
-    throw new Error(
-      `Could not launch ${BROWSER_CHANNEL}. Install Google Chrome, or set ANNOTATE_BROWSER=msedge, ` +
-        `or run "npx playwright install chromium" and set ANNOTATE_BROWSER=chromium. (${String(lastErr && lastErr.message).split("\n")[0]})`,
-    );
   }
   context.on("close", () => {
     context = null;
@@ -119,13 +122,22 @@ async function ensureBrowser() {
 }
 
 function sameUrl(a, b) {
-  try {
-    const x = new URL(a), y = new URL(b);
-    return x.origin === y.origin && x.pathname === y.pathname && x.search === y.search && x.hash === y.hash;
-  } catch { return a === b; }
+  try { return new URL(a).href === new URL(b).href; } catch { return a === b; }
+}
+// Mirrors isLocalHost() in overlay.js: the overlay only mounts there, so opening anything else is useless.
+const LOCAL_HOST = /^(localhost|127(\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})$/;
+function assertLocal(url) {
+  let u;
+  try { u = new URL(url); } catch { throw new Error("url must be a full http:// or https:// URL"); }
+  if (!/^https?:$/.test(u.protocol)) throw new Error("url must start with http:// or https://");
+  if (!LOCAL_HOST.test(u.hostname) && !/\.(localhost|test|local|internal)$/.test(u.hostname)) {
+    throw new Error(`annotate works on local development hosts only (localhost, 127.0.0.1, private IPs, *.localhost, *.test, *.local). Got ${u.hostname}.`);
+  }
+  return u.href;
 }
 
 async function openUrl(url) {
+  url = assertLocal(url);
   const ctx = await ensureBrowser();
   const live = ctx.pages().filter((p) => !p.isClosed());
   mainPage = live.find((p) => sameUrl(p.url(), url)) || live.find((p) => p.url() === "about:blank") || (await ctx.newPage());
@@ -233,7 +245,7 @@ function renderContent(batch, sections) {
   const totalNotes = sections.reduce((n, s) => n + s.pageState.notes.length, 0);
   const totalShapes = sections.reduce((n, s) => n + s.pageState.shapes.length, 0);
   let out = `Browser annotations · batch ${batch.id} · ${sections.length} page${sections.length === 1 ? "" : "s"} · ${totalNotes} note${totalNotes === 1 ? "" : "s"} · ${totalShapes} mark${totalShapes === 1 ? "" : "s"}\n`;
-  out += `Protocol: Read every PNG listed below first. Then, for each note in order: annotate_progress(note, "working"), make the change in the code, annotate_progress(note, "done", one-line summary). Marks without a note: act on what they point at. When everything is handled call annotate_done(summary). Keep terminal chatter short, the user watches the page.\n`;
+  out += `Read the PNGs, then annotate_progress(note, working|done|skipped) per note and annotate_done(summary) at the end.\n`;
   sections.forEach((sec, i) => {
     out += `\n## Page ${i + 1} of ${sections.length} — ${sec.url}\n`;
     out += `viewport ${sec.viewport.width}×${sec.viewport.height} · document ${sec.doc.w}×${sec.doc.h}\n`;
@@ -265,7 +277,10 @@ function renderContent(batch, sections) {
 }
 
 async function buildBatch() {
-  const pages = [...state.pages.entries()].filter(([, p]) => p.shapes.length || p.notes.length);
+  // Snapshot: a PUT /state during the build replaces the live arrays.
+  const pages = [...state.pages.entries()]
+    .map(([url, p]) => [url, { shapes: p.shapes.filter((s) => s.type !== "pen" || (Array.isArray(s.points) && s.points.length > 1)), notes: [...p.notes] }])
+    .filter(([, p]) => p.shapes.length || p.notes.length);
   if (!pages.length) throw new Error("Nothing to send yet.");
   const id = ++state.batchSeq;
   const dir = path.join(SHOTS_DIR, `batch-${id}`);
@@ -306,17 +321,20 @@ async function buildBatch() {
     done: false,
   };
   batch.content = renderContent(batch, sections);
-  // Mark notes as sent (so the overlay shows them as pending with Claude).
-  for (const [, p] of pages) {
-    for (const n of p.notes) { if (!n.batch) n.batch = id; if (!n.status || n.status === "draft") n.status = "pending"; }
-    for (const s of p.shapes) if (!s.batch) s.batch = id;
+  // Mark what went out as sent, on the live objects (they may have been replaced during the build).
+  for (const [url, snap] of pages) {
+    const live = state.pages.get(url);
+    if (!live) continue;
+    const ids = new Set([...snap.notes, ...snap.shapes].map((x) => x.id));
+    for (const n of live.notes) if (ids.has(n.id) && !n.batch) { n.batch = id; if (!n.status || n.status === "draft") n.status = "pending"; }
+    for (const sh of live.shapes) if (ids.has(sh.id) && !sh.batch) sh.batch = id;
   }
   return batch;
 }
 
 async function deliver(batch) {
   state.batches.push(batch);
-  state.pending = batch;
+  state.pending.push(batch);
   let pushed = false;
   if (state.mode === "channel") {
     try {
@@ -333,10 +351,11 @@ async function deliver(batch) {
     }
   }
   const waiters = state.waiters.splice(0);
-  for (const w of waiters) w(batch);
-  if (waiters.length) state.pending = null;
+  if (waiters.length) { takePending(batch); for (const w of waiters) w(batch); }
   return pushed;
 }
+
+function takePending(batch) { state.pending = state.pending.filter((b) => b !== batch); return batch; }
 
 async function removeBatchFiles(batch) {
   if (!batch || !batch.dir) return;
@@ -346,7 +365,7 @@ async function removeBatchFiles(batch) {
 async function clearAll() {
   state.pages.clear();
   state.nextNote = 1;
-  state.pending = null;
+  state.pending = [];
   for (const b of state.batches) await removeBatchFiles(b);
   state.batches = [];
   broadcast({ type: "clear" });
@@ -433,8 +452,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   switch (req.params.name) {
     case "annotate_open": {
       const url = String(args.url || "").trim();
-      if (!/^https?:\/\//i.test(url)) throw new Error("url must start with http:// or https://");
-      if (args.delivery) state.mode = args.delivery;
+      state.mode = args.delivery === "poll" ? "poll" : "channel";
       await openUrl(url);
       broadcast({ type: "hello", mode: state.mode });
       return text({
@@ -456,9 +474,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
     case "annotate_done": {
       const summary = String(args.summary || "").trim();
-      const batch = args.batch ? state.batches.find((b) => b.id === Number(args.batch)) : state.batches[state.batches.length - 1];
-      for (const [, p] of state.pages) for (const note of p.notes) if (note.batch && (note.status === "pending" || note.status === "working")) note.status = "done";
-      if (batch) { batch.done = true; await removeBatchFiles(batch); if (state.pending === batch) state.pending = null; }
+      // Without an id: the oldest batch still open, never a newer one Claude hasn't read yet.
+      const batch = args.batch ? state.batches.find((b) => b.id === Number(args.batch)) : state.batches.find((b) => !b.done);
+      if (batch) {
+        for (const [, p] of state.pages) for (const note of p.notes) if (note.batch === batch.id && (note.status === "pending" || note.status === "working")) note.status = "done";
+        batch.done = true;
+        await removeBatchFiles(batch);
+        takePending(batch);
+      }
       broadcast({ type: "done", summary, batch: batch ? batch.id : null });
       return text("ok");
     }
@@ -486,13 +509,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: "text", text: `saved ${file}` }, { type: "image", data: buf.toString("base64"), mimeType: "image/png" }] };
     }
     case "annotate_pull": {
-      const b = state.pending;
+      const b = state.pending[0];
       if (!b) return text({ status: "empty", hint: "Nothing waiting. Ask the user to hit Send to Claude on the page." });
-      state.pending = null;
-      return text(b.content);
+      return text(takePending(b).content);
     }
     case "annotate_wait": {
-      if (state.pending) { const b = state.pending; state.pending = null; return text(b.content); }
+      if (state.pending[0]) return text(takePending(state.pending[0]).content);
       if (!context) return text({ status: "closed" });
       const timeoutS = Math.min(Math.max(Number(args.timeout_s) || 1500, 5), 1700);
       const batch = await new Promise((resolve) => {
@@ -571,12 +593,13 @@ function totals() {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://localhost");
-  if (req.method === "OPTIONS") { res.writeHead(204, CORS); return res.end(); }
-  const token = req.headers["x-annot-token"] || url.searchParams.get("t");
-  if (token !== TOKEN) return json(res, 403, { ok: false, error: "forbidden" });
-
   try {
+    const url = new URL(req.url, "http://localhost");
+    if (req.method === "OPTIONS") { res.writeHead(204, CORS); return res.end(); }
+    // EventSource cannot set headers, so /events alone may carry the token in the query.
+    const token = req.headers["x-annot-token"] || (url.pathname === "/events" ? url.searchParams.get("t") : null);
+    if (token !== TOKEN) return json(res, 403, { ok: false, error: "forbidden" });
+
     if (req.method === "GET" && url.pathname === "/events") {
       res.writeHead(200, { ...CORS, "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
       res.write(`: connected\n\n`);
@@ -586,7 +609,6 @@ const server = http.createServer(async (req, res) => {
       req.on("close", () => { clearInterval(ping); state.listeners.delete(res); });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/health") return json(res, 200, { ok: true, mode: state.mode, version: VERSION, totals: totals() });
     if (req.method === "GET" && url.pathname === "/state") {
       const page = url.searchParams.get("url") || "";
       const p = state.pages.get(page) || { shapes: [], notes: [] };
@@ -606,12 +628,18 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, n: state.nextNote++ });
     }
     if (req.method === "POST" && url.pathname === "/send") {
-      let batch;
-      try { batch = await buildBatch(); } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-      const pushed = await deliver(batch);
-      log(`batch ${batch.id}: ${batch.notes} notes on ${batch.pages} page(s) → ${pushed ? "pushed" : state.mode === "poll" ? "handed to waiter" : "queued (pull)"}`);
-      broadcast({ type: "sent", batch: batch.id, notes: batch.notes, pages: batch.pages, pushed, mode: state.mode });
-      return json(res, 200, { ok: true, batch: batch.id, notes: batch.notes, pages: batch.pages, pushed, mode: state.mode, totals: totals() });
+      if (state.sending) return json(res, 409, { ok: false, error: "busy" });
+      state.sending = true;
+      try {
+        let batch;
+        try { batch = await buildBatch(); } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+        const pushed = await deliver(batch);
+        log(`batch ${batch.id}: ${batch.notes} notes on ${batch.pages} page(s) → ${pushed ? "written to the channel" : state.mode === "poll" ? "handed to waiter" : "queued (pull)"}`);
+        broadcast({ type: "sent", batch: batch.id, notes: batch.notes, pages: batch.pages, pushed, mode: state.mode });
+        return json(res, 200, { ok: true, batch: batch.id, notes: batch.notes, pages: batch.pages, pushed, mode: state.mode, totals: totals() });
+      } finally {
+        state.sending = false;
+      }
     }
     if (req.method === "POST" && url.pathname === "/status") {
       const body = JSON.parse((await readBody(req)) || "{}");
@@ -619,6 +647,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method === "POST" && url.pathname === "/clear") {
+      if (state.sending) return json(res, 409, { ok: false, error: "busy" });
       await clearAll();
       return json(res, 200, { ok: true });
     }
@@ -629,14 +658,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.on("error", (e) => {
-  if (e && e.code === "EADDRINUSE" && FIXED_PORT !== 0) {
-    log(`port ${FIXED_PORT} busy, using an ephemeral port`);
-    server.listen(0, "127.0.0.1");
-  } else {
-    log(`http server error: ${e}`);
-  }
-});
+server.on("error", (e) => log(`http server error: ${e}`));
 
 // ---------------------------------------------------------------------------
 // Housekeeping
@@ -652,15 +674,6 @@ async function writeSessionFile() {
   await fsp.writeFile(path.join(SESSIONS_DIR, `${PARENT_PID}.json`), JSON.stringify({ endpoint, token: TOKEN, pid: process.pid, startedAt: Date.now() }));
 }
 
-async function pruneOldShots() {
-  const entries = await fsp.readdir(SHOTS_ROOT).catch(() => []);
-  const cutoff = Date.now() - 24 * 3600 * 1000;
-  for (const e of entries) {
-    const p = path.join(SHOTS_ROOT, e);
-    const st = await fsp.stat(p).catch(() => null);
-    if (st && st.mtimeMs < cutoff) await fsp.rm(p, { recursive: true, force: true }).catch(() => {});
-  }
-}
 
 let cleaned = false;
 function cleanupSync() {
@@ -670,11 +683,16 @@ function cleanupSync() {
   if (sessionProfile) { try { fs.rmSync(sessionProfile, { recursive: true, force: true }); } catch { /* ignore */ } }
   try { fs.rmSync(path.join(SESSIONS_DIR, `${PARENT_PID}.json`), { force: true }); } catch { /* ignore */ }
 }
+let stopping = false;
 async function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  setTimeout(() => process.exit(0), 3000).unref(); // a wedged Chrome must not keep an orphan alive
   if (context) await context.close().catch(() => {});
   cleanupSync();
   process.exit(0);
 }
+process.on("unhandledRejection", (e) => log(`unhandled: ${e && e.stack ? e.stack.split("\n")[0] : e}`));
 process.on("exit", cleanupSync);
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
@@ -686,10 +704,9 @@ setInterval(() => { try { process.kill(PARENT_PID, 0); } catch { shutdown(); } }
 // Go
 // ---------------------------------------------------------------------------
 await mcp.connect(new StdioServerTransport());
-server.listen(FIXED_PORT, "127.0.0.1", async () => {
+server.listen(0, "127.0.0.1", async () => {
   endpoint = `http://127.0.0.1:${server.address().port}`;
   markReady();
   await writeSessionFile().catch((e) => log(`session file: ${e.message}`));
-  await pruneOldShots();
   log(`v${VERSION} ready at ${endpoint}`);
 });

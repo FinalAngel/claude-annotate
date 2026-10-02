@@ -17,12 +17,12 @@ process.stdin.on("end", async () => {
     const j = JSON.parse(input || "{}");
     const file = j.tool_input?.file_path || j.tool_input?.notebook_path;
     if (!file) return;
-    const pids = [process.ppid, parentOf(process.ppid), parentOf(parentOf(process.ppid))].filter(Boolean);
-    let f = pids.map((p) => path.join(SESSIONS, `${p}.json`)).find((p) => fs.existsSync(p));
-    if (!f) {
-      const all = fs.readdirSync(SESSIONS).map((n) => path.join(SESSIONS, n)).filter((p) => p.endsWith(".json"));
-      all.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-      f = all[0];
+    // Walk up the process tree (hook → shell → claude) until a session file matches.
+    // No match means no annotate session for this tree: do nothing, never guess another session's page.
+    let f = null;
+    for (let pid = process.ppid, i = 0; pid > 1 && i < 4 && !f; pid = parentOf(pid), i++) {
+      const c = path.join(SESSIONS, `${pid}.json`);
+      if (fs.existsSync(c)) f = c;
     }
     if (!f) return;
     const { endpoint, token } = JSON.parse(fs.readFileSync(f, "utf8"));
