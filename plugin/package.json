@@ -1,0 +1,12 @@
+{
+  "name": "claude-annotate-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Channel server, browser driver and overlay for the Annotate plugin.",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "playwright-core": "^1.58.0"
+  }
+}
