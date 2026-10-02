@@ -15,7 +15,7 @@
   <a href="https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
-<p align="center"><img alt="A pricing page in Chrome with the annotate toolbar at the bottom. A pink box and a yellow arrow mark the monthly toggle with note 1 reading 'monthly should be the default'. A cyan circle around the $5 price has note 2 open in a popover: 'price feels too big, drop one size'. A lime box marks the Become a Supporter button. The Send to Claude button shows a count of 5." src="assets/hero.png" width="1440"></p>
+<p align="center"><img alt="Demo. In Claude Code, /annotate http://localhost:5180/ opens the pricing page with the toolbar on it. A box, an arrow and a circle are drawn, two notes are typed, Send to Claude is pressed. Back in the terminal the batch arrives as a channel event and Claude reads the crop, edits content.tsx and reports progress per note. On the page the pins turn green with Claude's one-line results and the toolbar says All done." src="assets/demo.gif" width="1100"></p>
 
 ```text
 /plugin marketplace add FinalAngel/claude-annotate
@@ -101,7 +101,7 @@ Pasting a screenshot and describing it works, and it is what this replaces. Each
 | [Vibe Annotations](https://www.vibe-annotations.com/) | A Chrome extension on localhost pages | Claude polls an MCP server |
 | [React Grab](https://github.com/aidenybai/react-grab) | `⌘C` on an element in your React app | Clipboard, you paste |
 
-Everything that pushes into a running session uses Claude Code [channels](https://code.claude.com/docs/en/channels). Everything else waits to be asked.
+Everything that pushes into a running session uses Claude Code [channels](https://code.claude.com/docs/en/channels). Everything else waits to be asked. The first of those projects is where this one started, see [Credits](#credits).
 
 ## How it works
 
@@ -176,6 +176,10 @@ Layout: `plugin/server/index.mjs` is the whole server, `plugin/server/overlay.js
 Not there yet: marks inside iframes, pages that scroll a wrapper instead of the window, attaching an image to a note, a mobile viewport preset, and a channel allowlisting so the flag can go.
 
 To have an agent do the setup, point it at [INSTALL.md](INSTALL.md).
+
+## Credits
+
+Inspired by [tomreinert/claude-annotate](https://github.com/tomreinert/claude-annotate/), which showed that a Claude Code channel can carry a drawing from a live page into the running session. This one grew out of wanting the same thing with notes, element context, several pages and progress back on the page.
 
 ## License
 

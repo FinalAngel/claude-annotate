@@ -75,6 +75,7 @@
   let phase = "idle"; // idle | sending | sent | done
   let clearArmed = null;
   let sse = null;
+  let quietTimer = null; // fires the "/annotate pull" hint when a Send gets no reaction
 
   // ---------------------------------------------------------------------------
   // Transport
@@ -1022,8 +1023,10 @@ svg.ink g.draft { opacity: .9; }
       wigglePins();
       rim.classList.remove("flash"); void rim.offsetWidth; rim.classList.add("flash");
       const where = r.pages > 1 ? ` across ${r.pages} pages` : "";
-      const what = `Sent ${r.notes} note${r.notes === 1 ? "" : "s"}${where}.`;
-      toast(r.mode === "poll" ? `${what} Claude picks it up in the session.` : `${what} Nothing happening in the session? Type /annotate pull.`, "ok");
+      toast(`Sent ${r.notes} note${r.notes === 1 ? "" : "s"}${where}. The pins update as Claude works.`, "ok");
+      // The server cannot tell whether the channel is on. If nothing comes back, say what to do.
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => { if (phase === "sent") toast("Nothing from Claude yet? In the session, type /annotate pull."); }, 20000);
     } catch (e) {
       phase = "idle";
       renderToolbar();
@@ -1074,6 +1077,7 @@ svg.ink g.draft { opacity: .9; }
     sse.onerror = () => setLink("off");
     sse.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === "progress" || m.type === "done" || m.type === "status" || m.type === "toast") clearTimeout(quietTimer);
       switch (m.type) {
         case "hello": setLink("on"); if (m.totals) { totals = m.totals; renderToolbar(); } break;
         case "progress": {
