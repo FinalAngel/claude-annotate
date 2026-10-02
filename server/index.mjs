@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version;
+const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version; // plugin root
 const log = (...a) => process.stderr.write(`annotate: ${a.join(" ")}\n`);
 
 const PARENT_PID = process.ppid; // Claude Code. Captured now: it reads as 1 once the parent is gone.

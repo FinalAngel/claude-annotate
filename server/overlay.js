@@ -795,6 +795,7 @@ svg.ink g.draft { opacity: .9; }
     } catch { /* ignore */ }
   }
   function placeBar(x, y) {
+    bar.style.animation = "none"; // the rise keyframes keep translateX(-50%) applied and would shift a positioned bar
     const w = bar.offsetWidth || 560, h = bar.offsetHeight || 48;
     x = clamp(x, 8, innerWidth - w - 8);
     y = clamp(y, 8, innerHeight - h - 8);

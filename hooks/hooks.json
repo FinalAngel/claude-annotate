@@ -6,7 +6,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/ticker.mjs\"",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/ticker.mjs"
+            ],
             "timeout": 5
           }
         ]

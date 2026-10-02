@@ -1,11 +1,13 @@
 {
   "name": "annotate",
   "displayName": "Annotate",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Draw and leave notes on a live localhost page, then send it all into this Claude Code session. Progress comes back onto the page. Local only, no cloud.",
   "author": {
     "name": "Angelo Dini"
   },
+  "homepage": "https://github.com/FinalAngel/claude-annotate",
+  "repository": "https://github.com/FinalAngel/claude-annotate",
   "license": "MIT",
   "keywords": [
     "annotation",
@@ -14,5 +16,13 @@
     "screenshot",
     "channel",
     "playwright"
-  ]
+  ],
+  "mcpServers": {
+    "annotate": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server/index.mjs"
+      ]
+    }
+  }
 }

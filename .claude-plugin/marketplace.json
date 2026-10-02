@@ -1,13 +1,15 @@
 {
   "name": "claude-annotate",
-  "owner": { "name": "Angelo Dini" },
+  "owner": {
+    "name": "Angelo Dini"
+  },
   "description": "Draw on your running localhost site and send the marks straight into the Claude Code session that opened it.",
   "plugins": [
     {
       "name": "annotate",
       "displayName": "Annotate",
       "description": "/annotate <url> opens the page with drawing and note tools. Send to Claude pushes screenshots, notes and element context into this session; progress shows up on the page.",
-      "source": "./plugin"
+      "source": "./"
     }
   ]
 }

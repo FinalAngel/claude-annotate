@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "annotate": {
-      "command": "bash",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start.sh"]
-    }
-  }
-}

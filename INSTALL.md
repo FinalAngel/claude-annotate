@@ -21,7 +21,7 @@ Inside a Claude Code session:
 
 Choose **user** scope when asked, so it's available in every project. If the marketplace was cloned locally instead, pass the directory: `/plugin marketplace add /path/to/claude-annotate`.
 
-The first session that starts after the install runs `npm ci` inside the plugin directory to fetch the two dependencies, because Claude Code spawns the plugin's server at session start. That takes a few seconds once. If `/mcp` shows annotate as failed right after installing, start a new session.
+Claude Code installs the plugin's two npm packages from its lockfile when it copies the plugin into the cache, with install scripts disabled. If `/plugin` later shows a note that the packages are not installed, run `claude plugin update annotate@claude-annotate` to retry, or run `npm install` inside the plugin directory it names.
 
 ## 3. Start the session with the channel flag
 
@@ -62,6 +62,6 @@ If nothing arrives in the session within a few seconds, type `/annotate pull`. I
 | Symptom | Cause | Fix |
 |---|---|---|
 | `/annotate` says it cannot launch chrome | No Chrome at the standard path, or the shared profile is locked by a crashed window | Install Chrome or set `ANNOTATE_BROWSER`; kill stray `Google Chrome` processes whose arguments contain `claude-annotate/chrome-profile` |
-| `/mcp` shows the annotate server as failed | `npm ci` failed or Node is too old | Run `cd <plugin dir> && npm ci` by hand and read the error |
+| `/mcp` shows the annotate server as failed | The packages did not install, or Node is too old | `claude plugin update annotate@claude-annotate`, or `npm install` inside the plugin directory, then start a new session |
 | Marks drawn but Send does nothing | The bridge is unreachable (red dot on the toolbar) | Restart the session; the server and the overlay share one process |
 | Progress never shows on the page | Claude is not calling `annotate_progress` | Remind it: the `/annotate` command and the server instructions describe the protocol |

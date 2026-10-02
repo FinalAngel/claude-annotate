@@ -1,21 +1,12 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-    <img alt="annotate" src="assets/logo.svg" width="264" height="80">
-  </picture>
-</p>
+![annotate](assets/logo.svg#gh-light-mode-only)
+![annotate](assets/logo-dark.svg#gh-dark-mode-only)
 
-<p align="center"><strong>Draw on the page. Claude fixes the code.</strong><br>A Claude Code plugin: mark up your running localhost site in the browser, hit <em>Send to Claude</em>, and every mark lands in the session that opened the page, with the element, its component and a screenshot under each one.</p>
+**Draw on the page. Claude fixes the code.**
+A Claude Code plugin: mark up your running localhost site in the browser, hit *Send to Claude*, and every mark lands in the session that opened the page, with the element, its component and a screenshot under each one.
 
-<p align="center">
-  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-FF4D8D"></a>
-  <img alt="Node 20 or later" src="https://img.shields.io/badge/node-%3E%3D20-FF4D8D">
-  <img alt="Two dependencies" src="https://img.shields.io/badge/dependencies-2-FF4D8D">
-  <img alt="Nothing leaves the machine" src="https://img.shields.io/badge/cloud-none-FF4D8D">
-  <a href="https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml/badge.svg"></a>
-</p>
+[![MIT license](https://img.shields.io/badge/license-MIT-FF4D8D)](LICENSE) ![Node 20 or later](https://img.shields.io/badge/node-%3E%3D20-FF4D8D) ![Two dependencies](https://img.shields.io/badge/dependencies-2-FF4D8D) ![Nothing leaves the machine](https://img.shields.io/badge/cloud-none-FF4D8D) [![CI](https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml/badge.svg)](https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml)
 
-<p align="center"><img alt="Demo. In Claude Code, /annotate http://localhost:5180/ opens the pricing page with the toolbar on it. A box, an arrow and a circle are drawn, two notes are typed, Send to Claude is pressed. Back in the terminal the batch arrives as a channel event and Claude reads the crop, edits content.tsx and reports progress per note. On the page the pins turn green with Claude's one-line results and the toolbar says All done." src="assets/demo.gif" width="1100"></p>
+![Demo. In Claude Code, /annotate http://localhost:5180/ opens the pricing page with the toolbar on it. A box, an arrow and a circle are drawn, two notes are typed, Send to Claude is pressed. Back in the terminal the batch arrives as a channel event and Claude reads the crop, edits content.tsx and reports progress per note. On the page the pins turn green with Claude's one-line results and the toolbar says All done.](assets/demo.gif)
 
 ```text
 /plugin marketplace add FinalAngel/claude-annotate
@@ -73,7 +64,7 @@ Per note that is: your text, the element under the pin with its visible text and
 
 ## On the page
 
-<p align="center"><img alt="The same page after Claude finished. Pins 1 and 2 are green checks with a result line under each note: 'Monthly is the default now' and 'Price dropped one step on the scale'. Pin 3 is grey with 'Hero buttons use that circle for primary actions only'. A toast at the top reads Done with Claude's summary, and the toolbar button says All done." src="assets/done.png" width="1440"></p>
+![The same page after Claude finished. Pins 1 and 2 are green checks with a result line under each note: Monthly is the default now, and Price dropped one step on the scale. Pin 3 is grey with Hero buttons use that circle for primary actions only. A toast at the top reads Done with Claude's summary, and the toolbar button says All done.](assets/done.png)
 
 | | |
 |---|---|
@@ -107,13 +98,13 @@ Everything that pushes into a running session uses Claude Code [channels](https:
 
 One Node process per session, spawned by Claude Code as an MCP server. It does three jobs:
 
-1. **Browser.** On `/annotate <url>` it launches the Chrome you already have through `playwright-core`, with its own profile under `~/.cache/claude-annotate/`, and injects `plugin/server/overlay.js` into every page before the page's own scripts run. The overlay is a Shadow DOM on a host appended to `<html>`: the page's CSS never reaches it, and its CSS never reaches the page. Marks live in document coordinates, so they stay put while you scroll. No change to your app, no extension, no build step.
+1. **Browser.** On `/annotate <url>` it launches the Chrome you already have through `playwright-core`, with its own profile under `~/.cache/claude-annotate/`, and injects `server/overlay.js` into every page before the page's own scripts run. The overlay is a Shadow DOM on a host appended to `<html>`: the page's CSS never reaches it, and its CSS never reaches the page. Marks live in document coordinates, so they stay put while you scroll. No change to your app, no extension, no build step.
 2. **Bridge.** The overlay talks to the process over a local HTTP port with a per-session token. State is kept per URL on the server, which is why navigation keeps your marks and a reload restores them. A `PostToolUse` hook posts the file Claude just edited, and tool results, toasts and the done summary stream back to the page over server-sent events.
 3. **Channel.** On Send, the process screenshots every annotated page (pages that aren't open right now get rendered in a temporary tab), clusters nearby marks into crops, writes the PNGs to a temp dir, and pushes one `notifications/claude/channel` event into the session. Claude reads the files, edits the code, and calls `annotate_progress` per note and `annotate_done` at the end, which deletes the PNGs.
 
 The overlay mounts on local development hosts only (localhost, 127.0.0.1, private IPs, `*.localhost`, `*.test`, `*.local`, `*.internal`) and takes the bridge token off the page before any page script runs, so a third-party site opened in that window never sees it. `annotate_open` refuses other hosts.
 
-<p align="center"><img alt="Mid-batch: a toast says Sent 3 notes, Claude is on it. Pin 1 pulses with a spinning ring while the ticker above the toolbar reads working on note 1. The Send button has turned into a breathing Claude is on it." src="assets/working.png" width="1440"></p>
+![Mid-batch: a toast says Sent 3 notes. Pin 1 pulses with a spinning ring while the ticker above the toolbar reads working on note 1. The Send button has turned into a breathing Claude is on it.](assets/working.png)
 
 Tools the server exposes: `annotate_open`, `annotate_progress`, `annotate_done`, `annotate_reply`, `annotate_screenshot`, `annotate_pull`, `annotate_wait`, `annotate_clear`, `annotate_close`. The `/annotate` command tells Claude how to use them; the server's MCP instructions repeat the protocol so a channel event is handled even if you never typed the command in this session.
 
@@ -164,14 +155,14 @@ The bridge listens on `127.0.0.1` only and every request needs the session token
 ## Development
 
 ```sh
-cd plugin && npm install
+npm install                                     # only for a checkout; an installed plugin gets its packages from Claude Code
 npm test                                        # syntax, MCP handshake, bridge, hook, cleanup. No browser.
-claude --plugin-dir ./plugin --dangerously-load-development-channels plugin:annotate@claude-annotate
+claude --plugin-dir . --dangerously-load-development-channels plugin:annotate@claude-annotate
 ```
 
 `ANNOTATE_DEBUG=1` adds an `annotate_debug` tool that drives the browser (mouse, keys, eval, viewport), which is how the screenshots in this README were staged against a real app.
 
-Layout: `plugin/server/index.mjs` is the whole server, `plugin/server/overlay.js` the whole overlay, `plugin/commands/annotate.md` what Claude does, `plugin/hooks/hooks.json` and `plugin/scripts/ticker.mjs` the file ticker. Two runtime dependencies: `@modelcontextprotocol/sdk` and `playwright-core`.
+Layout: the plugin is the repository root. `server/index.mjs` is the whole server, `server/overlay.js` the whole overlay, `commands/annotate.md` what Claude does, `hooks/hooks.json` and `scripts/ticker.mjs` the file ticker. Two runtime dependencies, `@modelcontextprotocol/sdk` and `playwright-core`, which Claude Code installs from the lockfile when it installs the plugin.
 
 Not there yet: marks inside iframes, pages that scroll a wrapper instead of the window, attaching an image to a note, a mobile viewport preset, and a channel allowlisting so the flag can go.
 
