@@ -420,7 +420,7 @@ if (process.env.ANNOTATE_DEBUG === "1") {
   TOOLS.push({
     name: "annotate_debug",
     description: "Development only. Drive the annotation browser: mouse ops [[move|down|up|click|wheel, x, y]...], keys to press, text to type, and/or JS to evaluate in the page.",
-    inputSchema: { type: "object", properties: { mouse: { type: "array" }, keys: { type: "array" }, type: { type: "string" }, eval: { type: "string" } } },
+    inputSchema: { type: "object", properties: { mouse: { type: "array" }, keys: { type: "array" }, type: { type: "string" }, eval: { type: "string" }, viewport: { type: "object" } } },
   });
 }
 
@@ -519,6 +519,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (process.env.ANNOTATE_DEBUG !== "1") throw new Error("unknown tool");
       const page = mainPage;
       if (!page) throw new Error("no page");
+      if (args.viewport) await page.setViewportSize(args.viewport);
       for (const [op, x, y] of args.mouse || []) {
         if (op === "move") await page.mouse.move(x, y, { steps: 10 });
         else if (op === "down") await page.mouse.down();

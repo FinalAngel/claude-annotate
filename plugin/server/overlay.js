@@ -393,24 +393,33 @@ svg.ink g.draft { opacity: .9; }
         else node = node.parentElement;
       }
       if (!fiber) return out;
-      const srcOf = (f) => {
-        if (f._debugSource && f._debugSource.fileName) return `${relPath(f._debugSource.fileName)}:${f._debugSource.lineNumber}`;
+      const isLibFile = (file) => /node_modules|\/@|react-dom|react-refresh|chunk-|\.vite\//.test(file);
+      // Where this fiber was created: React <19 keeps _debugSource, React 19 keeps the
+      // owner stack. Returns { src, user } with src like "src/App.tsx:12".
+      const callSite = (f) => {
+        if (f._debugSource && f._debugSource.fileName) {
+          const file = f._debugSource.fileName;
+          return { src: `${relPath(file)}:${f._debugSource.lineNumber}`, user: !isLibFile(file) };
+        }
         const st = f._debugStack;
         const stack = typeof st === "string" ? st : st && st.stack;
-        if (stack) {
-          const m = [...stack.matchAll(/\(?((?:https?:\/\/[^\s)]+?)|(?:\/[^\s)]+?)):(\d+):(\d+)\)?/g)].map((x) => ({ file: x[1], line: x[2] }))
-            .find((fr) => !/node_modules|\/@|react-dom|react-refresh|chunk-|\.vite\//.test(fr.file));
-          if (m) return `${relPath(m.file)}:${m.line}`;
-        }
-        return null;
+        if (!stack) return null;
+        const frames = [...stack.matchAll(/\(?((?:https?:\/\/[^\s)]+?)|(?:\/[^\s)]+?)):(\d+):(\d+)\)?/g)].map((x) => ({ file: x[1], line: x[2] }));
+        const user = frames.find((fr) => !isLibFile(fr.file));
+        if (user) return { src: `${relPath(user.file)}:${user.line}`, user: true };
+        return frames.length ? { src: null, user: false } : null;
       };
       const nameOf = (t) => (typeof t === "function" ? (t.displayName || t.name) : t && typeof t === "object" ? (t.displayName || (t.render && (t.render.displayName || t.render.name)) || (t.type && (t.type.displayName || t.type.name))) : null) || null;
-      const LIB = /^(Fragment|Suspense|Provider|Consumer|Context|Root|Router|Routes|Route|Outlet|Profiler|StrictMode|Slot(\.\w+)*|SlotClone|Presence|Portal|FocusScope|DismissableLayer|Primitive(\.\w+)*|Toggle|Collection\w*|\w+Impl|\w+Provider|\w+Consumer|\w+Boundary|\w+Context)$/;
+      const NOISE = /Slot|Collection|Provider|Consumer|Context|Impl$|^Primitive|Presence|Portal|FocusScope|Dismissable|RovingFocus|^Fragment$|^Suspense$|^StrictMode$|^Profiler$|^Root$/;
       let f = fiber;
-      for (let depth = 0; f && depth < 60; depth++, f = f.return) {
+      for (let depth = 0; f && depth < 80; depth++, f = f.return) {
         const name = nameOf(f.type);
-        if (name && !name.startsWith("_") && !LIB.test(name) && !/^Primitive\./.test(name) && out.components.length < 5 && !out.components.includes(name)) out.components.push(name);
-        if (!out.source) out.source = srcOf(f);
+        const site = callSite(f);
+        if (!out.source && site && site.user) out.source = site.src;
+        if (name && !name.startsWith("_") && !NOISE.test(name) && out.components.length < 5 && !out.components.includes(name)) {
+          // Keep components that appear in the user's own JSX (or whose origin is unknown).
+          if (!site || site.user) out.components.push(name);
+        }
         if (out.components.length >= 5 && out.source) break;
       }
     } catch { /* not react */ }
