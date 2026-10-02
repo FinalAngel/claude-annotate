@@ -136,17 +136,36 @@ function assertLocal(url) {
   return u.href;
 }
 
+// The user's tab. Everything happens in it: a second /annotate or a verification screenshot
+// navigates it in place rather than opening another tab.
 async function openUrl(url) {
   url = assertLocal(url);
   const ctx = await ensureBrowser();
   const live = ctx.pages().filter((p) => !p.isClosed());
-  mainPage = live.find((p) => sameUrl(p.url(), url)) || live.find((p) => p.url() === "about:blank") || (await ctx.newPage());
-  await mainPage.bringToFront();
-  if (!sameUrl(mainPage.url(), url)) {
-    await mainPage.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-  }
+  const page = live.find((p) => sameUrl(p.url(), url)) || (mainPage && !mainPage.isClosed() ? mainPage : null) || live[0] || (await ctx.newPage());
+  mainPage = page;
+  await page.bringToFront();
+  if (!sameUrl(page.url(), url)) await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   state.lastUrl = url;
-  return mainPage;
+  return page;
+}
+
+// A tab that opens behind the user's tab, so Send never pulls focus away. Falls back to a
+// normal new tab when the devtools command isn't available.
+async function backgroundPage(ctx) {
+  const anchor = ctx.pages().find((p) => !p.isClosed());
+  if (anchor) {
+    try {
+      const cdp = await ctx.newCDPSession(anchor);
+      const arrival = ctx.waitForEvent("page", { timeout: 5000 });
+      await cdp.send("Target.createTarget", { url: "about:blank", newWindow: false, background: true });
+      await cdp.detach().catch(() => {});
+      return await arrival;
+    } catch (e) {
+      log(`background tab unavailable (${String(e.message).split("\n")[0]}), using a normal tab`);
+    }
+  }
+  return ctx.newPage();
 }
 
 async function pageFor(url) {
@@ -154,12 +173,28 @@ async function pageFor(url) {
   const live = ctx.pages().filter((p) => !p.isClosed());
   const found = live.find((p) => sameUrl(p.url(), url));
   if (found) return { page: found, temp: false };
-  const page = await ctx.newPage();
+  const page = await backgroundPage(ctx);
   await page.addInitScript("window.__CLAUDE_ANNOTATE_RENDER_ONLY__ = true;");
   await page.goto(url, { waitUntil: "networkidle", timeout: 30000 }).catch(() => {});
   await page.waitForFunction(() => window.__claudeAnnotate && window.__claudeAnnotate.ready, null, { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(250);
   return { page, temp: true };
+}
+
+// Screenshot a page that may be a background tab. If Chrome refuses to paint it, bring it
+// forward for the shot and give the user's tab back afterwards.
+async function shoot(page, opts) {
+  try {
+    return await page.screenshot({ ...opts, timeout: 10000 });
+  } catch (e) {
+    const front = mainPage && !mainPage.isClosed() && mainPage !== page ? mainPage : null;
+    await page.bringToFront().catch(() => {});
+    try {
+      return await page.screenshot({ ...opts, timeout: 30000 });
+    } finally {
+      if (front) await front.bringToFront().catch(() => {});
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,12 +334,12 @@ async function buildBatch() {
         h: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
       }));
       const fullPath = path.join(dir, `p${pi}-page.png`);
-      await page.screenshot({ path: fullPath, fullPage: true, scale: "css" });
+      await shoot(page, { path: fullPath, fullPage: true, scale: "css" });
       const clusters = clusterItems(pageState, doc);
       const shots = [];
       for (const [ci, c] of clusters.entries()) {
         const p = path.join(dir, `p${pi}-crop${ci + 1}.png`);
-        await page.screenshot({ path: p, fullPage: true, scale: "css", clip: c.clip });
+        await shoot(page, { path: p, fullPage: true, scale: "css", clip: c.clip });
         shots.push({ ...c, path: p });
       }
       sections.push({ url, viewport, doc, fullPath, shots, pageState });

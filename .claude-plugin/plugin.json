@@ -1,7 +1,7 @@
 {
   "name": "annotate",
   "displayName": "Annotate",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Draw and leave notes on a live localhost page, then send it all into this Claude Code session. Progress comes back onto the page. Local only, no cloud.",
   "author": {
     "name": "Angelo Dini"
