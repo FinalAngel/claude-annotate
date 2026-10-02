@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="264" height="80" viewBox="0 0 264 80" role="img" aria-label="annotate">
+  <path d="M74 60 C 118 55, 186 64, 246 57" fill="none" stroke="#FF4D8D" stroke-width="7" stroke-linecap="round" opacity="0.95"/>
+  <circle cx="38" cy="40" r="23" fill="#FF4D8D" stroke="#F4F1F7" stroke-width="3.5"/>
+  <text x="38" y="49.5" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="800" font-size="27" fill="#2A0A17">1</text>
+  <text x="72" y="52" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="800" font-size="42" letter-spacing="-1.8" fill="#F4F1F7">annotate</text>
+</svg>
