@@ -1,7 +1,7 @@
 {
   "name": "annotate",
-  "displayName": "Annotate",
-  "version": "0.2.2",
+  "displayName": "Claude Annotate",
+  "version": "0.2.3",
   "description": "Draw and leave notes on a live localhost page, then send it all into this Claude Code session. Progress comes back onto the page. Local only, no cloud.",
   "author": {
     "name": "Angelo Dini"
@@ -20,9 +20,7 @@
   "mcpServers": {
     "annotate": {
       "command": "node",
-      "args": [
-        "${CLAUDE_PLUGIN_ROOT}/server/index.mjs"
-      ]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/index.mjs"]
     }
   }
 }

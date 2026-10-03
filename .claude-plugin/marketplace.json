@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "annotate",
-      "displayName": "Annotate",
+      "displayName": "Claude Annotate",
       "description": "/annotate <url> opens the page with drawing and note tools. Send to Claude pushes screenshots, notes and element context into this session; progress shows up on the page.",
       "source": "./"
     }
