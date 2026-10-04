@@ -32,12 +32,13 @@
     { id: "cyan", hex: "#35D7FF", dark: "#062530" },
     { id: "lime", hex: "#9BFF4D", dark: "#142A05" },
   ];
-  const TOOLS = ["pen", "arrow", "rect", "ellipse", "note", "select"];
-  const KEYS = { p: "pen", a: "arrow", r: "rect", e: "ellipse", n: "note", s: "select" };
+  const TOOLS = ["pen", "arrow", "line", "rect", "ellipse", "note", "select"];
+  const KEYS = { p: "pen", a: "arrow", l: "line", r: "rect", e: "ellipse", n: "note", s: "select" };
   const ICON = {
     hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
     pen: '<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>',
     arrow: '<path d="M5 19 19 5"/><path d="M9 5h10v10"/>',
+    line: '<path d="M5 19 19 5"/>',
     rect: '<rect x="3" y="5" width="18" height="14" rx="3"/>',
     ellipse: '<ellipse cx="12" cy="12" rx="9" ry="7"/>',
     note: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6"/><path d="M9 10h6"/>',
@@ -65,7 +66,7 @@
   let notes = []; // { id, n, x, y, color, text, status, ctx, batch, result }
   let tool = "pen";
   let ink = INKS[0];
-  let mode = RENDER_ONLY ? "browse" : "draw"; // draw | browse
+  let mode = "browse"; // draw | browse. Browse first: the page stays usable until a tool is picked
   let selected = null;
   let draft = null;
   const undo = [];
@@ -121,7 +122,7 @@ svg.ink .halo { fill: none; stroke: rgba(10,8,14,.42); stroke-width: 7; stroke-l
 svg.ink .line { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
 svg.ink .head { stroke: rgba(10,8,14,.42); stroke-width: 2; stroke-linejoin: round; }
 svg.ink g.draft { opacity: .9; }
-:host(.capturing) svg.ink .hit, :host(.capturing) .chrome, :host(.capturing) g.shape.selected .halo { display: none !important; }
+:host(.capturing) svg.ink .hit, :host(.capturing) .chrome, :host(.capturing) .pop, :host(.capturing) g.shape.selected .halo { display: none !important; }
 :host(.capturing) .pin .tag { white-space: normal; width: max-content; max-width: 260px; border-radius: 12px; }
 :host(.capturing) .pin .dot { animation: none; }
 
@@ -269,9 +270,12 @@ svg.ink g.draft { opacity: .9; }
 .pop .ok:active { transform: scale(.96); }
 
 .sel { position: absolute; pointer-events: none; }
-.sel .del { position: absolute; right: -14px; top: -14px; width: 28px; height: 28px; border-radius: 999px; border: 0; padding: 0; display: grid; place-items: center; cursor: pointer; pointer-events: auto;
+.sel .del { position: absolute; right: -14px; top: -44px; width: 28px; height: 28px; border-radius: 999px; border: 0; padding: 0; display: grid; place-items: center; cursor: pointer; pointer-events: auto;
   background: rgba(20,17,26,.92); color: #FF8A8A; box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 0 1px rgba(255,255,255,.08), 0 10px 24px -12px rgba(0,0,0,.7); animation: pop .2s cubic-bezier(.34,1.56,.64,1) both; }
 .sel .del:hover { background: rgba(255,92,92,.2); }
+.sel .hdl { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 2px rgba(10,8,14,.6), 0 2px 6px rgba(0,0,0,.4); pointer-events: auto; cursor: move; }
+.sel .hdl.nw, .sel .hdl.se { cursor: nwse-resize; }
+.sel .hdl.ne, .sel .hdl.sw { cursor: nesw-resize; }
 
 @keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes slide { from { transform: translateX(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -503,7 +507,7 @@ svg.ink g.draft { opacity: .9; }
       const x = Math.min(...xs), y = Math.min(...ys);
       return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
     }
-    if (s.type === "arrow") {
+    if (s.type === "arrow" || s.type === "line") {
       const x = Math.min(s.x1, s.x2), y = Math.min(s.y1, s.y2);
       return { x, y, w: Math.abs(s.x2 - s.x1), h: Math.abs(s.y2 - s.y1) };
     }
@@ -547,6 +551,10 @@ svg.ink g.draft { opacity: .9; }
       const { line, head } = arrowParts(s);
       body = `<path class="halo" d="${line}"/><path class="line" stroke="${hex}" d="${line}"/><polygon class="head" fill="${hex}" points="${head}"/>`;
       hit = `<path class="hit" d="M${s.x1} ${s.y1} L${s.x2} ${s.y2}"/>`;
+    } else if (s.type === "line") {
+      const d = `M${s.x1} ${s.y1} L${s.x2} ${s.y2}`;
+      body = `<path class="halo" d="${d}"/><path class="line" stroke="${hex}" d="${d}"/>`;
+      hit = `<path class="hit" d="${d}"/>`;
     }
     return `<g class="${cls}${selected === s.id ? " selected" : ""}" data-id="${s.id}">${body}${hit}</g>`;
   }
@@ -573,6 +581,18 @@ svg.ink g.draft { opacity: .9; }
     del.title = "Delete (⌫)";
     del.addEventListener("click", (e) => { e.stopPropagation(); deleteSelected(); });
     selBox.appendChild(del);
+    for (const [k, hx, hy] of handlesOf(s)) {
+      const h = el("span", `hdl ${k}`);
+      h.style.left = hx - b.x + "px"; h.style.top = hy - b.y + "px";
+      h.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation(); e.preventDefault();
+        const [x, y] = toDoc(e);
+        drag = { kind: "shape", handle: k, s, orig: JSON.parse(JSON.stringify(s)), x, y, before: snapshot(), moved: false };
+        svg.setPointerCapture(e.pointerId); // onMove/onUp on the svg take it from here
+      });
+      selBox.appendChild(h);
+    }
     pinsLayer.appendChild(selBox);
   }
 
@@ -609,7 +629,17 @@ svg.ink g.draft { opacity: .9; }
   // Popover (note text)
   // ---------------------------------------------------------------------------
   let popNote = null;
-  function openPopover(note, isNew = false) {
+  // The dev server may full-reload the page mid-sentence; keep the open note's text so mount can reopen it.
+  const DRAFT_KEY = "claude-annotate:draft";
+  const stashDraft = (v) => { try { v ? sessionStorage.setItem(DRAFT_KEY, JSON.stringify(v)) : sessionStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } };
+  function reopenDraft() {
+    let d; try { d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "null"); } catch { return; }
+    if (!d || d.url !== pageUrl() || popNote) return;
+    let note = notes.find((k) => k.id === d.note.id);
+    if (!note) { if (!d.isNew) return stashDraft(null); note = d.note; notes.push(note); renderPins(); }
+    openPopover(note, d.isNew, d.text);
+  }
+  function openPopover(note, isNew = false, text = note.text) {
     popNote = note;
     const inkDef = INKS.find((i) => i.id === note.color) || INKS[0];
     popover.style.setProperty("--ink", inkDef.hex);
@@ -620,10 +650,12 @@ svg.ink g.draft { opacity: .9; }
       <textarea placeholder="e.g. make this less loud, same style as the card on the left" rows="2" maxlength="600"></textarea>
       <div class="hint"><span><kbd>↵</kbd> save · <kbd>⇧↵</kbd> line · <kbd>esc</kbd> ${isNew ? "discard" : "close"}</span><button class="ok" type="button">${svgIcon("check", 13)} Save</button></div>`;
     const ta = popover.querySelector("textarea");
-    ta.value = note.text || "";
+    ta.value = text || "";
     popover.classList.remove("hidden");
     const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(180, ta.scrollHeight) + "px"; };
     ta.addEventListener("input", grow);
+    const url = pageUrl();
+    ta.addEventListener("input", () => stashDraft({ url, note, isNew, text: ta.value }));
     grow();
     placePopover();
     ta.focus();
@@ -669,6 +701,7 @@ svg.ink g.draft { opacity: .9; }
     popover.classList.add("hidden");
     popover.innerHTML = "";
     popNote = null;
+    stashDraft(null);
     if (was) { const d = pinsLayer.querySelector(`.pin[data-id="${was.id}"] .dot`); if (d) d.focus({ preventScroll: true }); }
   }
 
@@ -683,8 +716,21 @@ svg.ink g.draft { opacity: .9; }
   function addShape(s) { pushUndo(); s.ctx = ctxForShape(s); shapes.push(s); renderInk(); save(); }
   function translateShape(s, o, dx, dy) {
     if (s.type === "pen") s.points = o.points.map(([x, y]) => [x + dx, y + dy]);
-    else if (s.type === "arrow") { s.x1 = o.x1 + dx; s.y1 = o.y1 + dy; s.x2 = o.x2 + dx; s.y2 = o.y2 + dy; }
+    else if (s.type === "arrow" || s.type === "line") { s.x1 = o.x1 + dx; s.y1 = o.y1 + dy; s.x2 = o.x2 + dx; s.y2 = o.y2 + dy; }
     else { s.x = o.x + dx; s.y = o.y + dy; }
+  }
+  function handlesOf(s) {
+    if (s.type === "arrow" || s.type === "line") return [["p1", s.x1, s.y1], ["p2", s.x2, s.y2]];
+    if (s.type === "rect" || s.type === "ellipse") return [["nw", s.x, s.y], ["ne", s.x + s.w, s.y], ["sw", s.x, s.y + s.h], ["se", s.x + s.w, s.y + s.h]];
+    return []; // pen strokes only move
+  }
+  function resizeShape(s, o, h, x, y, square) {
+    if (h === "p1") { s.x1 = x; s.y1 = y; return; }
+    if (h === "p2") { s.x2 = x; s.y2 = y; return; }
+    const ax = h.includes("w") ? o.x + o.w : o.x, ay = h.includes("n") ? o.y + o.h : o.y; // the opposite corner stays put
+    let w = Math.max(8, Math.abs(x - ax)), hh = Math.max(8, Math.abs(y - ay));
+    if (square) w = hh = Math.max(w, hh);
+    s.x = x < ax ? ax - w : ax; s.y = y < ay ? ay - hh : ay; s.w = w; s.h = hh;
   }
   function deleteSelected() {
     if (!selected) return;
@@ -770,6 +816,7 @@ svg.ink g.draft { opacity: .9; }
       <span class="sep"></span>
       ${btn("pen", "Pen", "P", tool === "pen" && mode === "draw" ? "on" : "")}
       ${btn("arrow", "Arrow", "A", tool === "arrow" && mode === "draw" ? "on" : "")}
+      ${btn("line", "Line", "L", tool === "line" && mode === "draw" ? "on" : "")}
       ${btn("rect", "Box", "R", tool === "rect" && mode === "draw" ? "on" : "")}
       ${btn("ellipse", "Circle", "E", tool === "ellipse" && mode === "draw" ? "on" : "")}
       ${btn("note", "Note", "N", tool === "note" && mode === "draw" ? "on" : "")}
@@ -938,7 +985,7 @@ svg.ink g.draft { opacity: .9; }
     e.preventDefault();
     svg.setPointerCapture(e.pointerId);
     if (tool === "pen") draft = { id: uid(), type: "pen", color: ink.id, points: [[x, y]] };
-    else if (tool === "arrow") draft = { id: uid(), type: "arrow", color: ink.id, x1: x, y1: y, x2: x, y2: y };
+    else if (tool === "arrow" || tool === "line") draft = { id: uid(), type: tool, color: ink.id, x1: x, y1: y, x2: x, y2: y };
     else draft = { id: uid(), type: tool, color: ink.id, x, y, w: 0, h: 0, _ox: x, _oy: y };
     sizeDoc();
     renderDraft();
@@ -951,7 +998,8 @@ svg.ink g.draft { opacity: .9; }
       if (!drag.moved && Math.hypot(dx, dy) < 3) return;
       drag.moved = true;
       host.classList.add("dragging");
-      translateShape(drag.s, drag.orig, dx, dy);
+      if (drag.handle) resizeShape(drag.s, drag.orig, drag.handle, x, y, e.shiftKey);
+      else translateShape(drag.s, drag.orig, dx, dy);
       renderShape(drag.s);
       return;
     }
@@ -960,7 +1008,7 @@ svg.ink g.draft { opacity: .9; }
     if (draft.type === "pen") {
       const l = draft.points[draft.points.length - 1];
       if (Math.hypot(x - l[0], y - l[1]) >= 2.5) draft.points.push([x, y]);
-    } else if (draft.type === "arrow") { draft.x2 = x; draft.y2 = y; }
+    } else if (draft.type === "arrow" || draft.type === "line") { draft.x2 = x; draft.y2 = y; }
     else {
       draft.x = Math.min(draft._ox, x); draft.y = Math.min(draft._oy, y);
       draft.w = Math.abs(x - draft._ox); draft.h = Math.abs(y - draft._oy);
@@ -979,7 +1027,7 @@ svg.ink g.draft { opacity: .9; }
     const d = draft; draft = null;
     let ok = false;
     if (d.type === "pen") ok = d.points.length >= 3;
-    else if (d.type === "arrow") ok = Math.hypot(d.x2 - d.x1, d.y2 - d.y1) >= 12;
+    else if (d.type === "arrow" || d.type === "line") ok = Math.hypot(d.x2 - d.x1, d.y2 - d.y1) >= 12;
     else { ok = d.w >= 8 && d.h >= 8; delete d._ox; delete d._oy; }
     if (ok) addShape(d); else renderDraft();
   }
@@ -1069,6 +1117,7 @@ svg.ink g.draft { opacity: .9; }
       if (totals.open > 0) phase = "sent";
       else if (totals.batches > 0 && totals.unsent === 0) phase = "done";
       renderInk(); renderPins(); renderToolbar();
+      reopenDraft();
     } catch { setLink("off"); }
   }
   function connectSse() {
@@ -1111,7 +1160,7 @@ svg.ink g.draft { opacity: .9; }
   // ---------------------------------------------------------------------------
   // Public hooks for the server
   // ---------------------------------------------------------------------------
-  api.capture = (on) => { if (!host) return; host.classList.toggle("capturing", !!on); if (on) { closePopover(); selected = null; renderSelection(); } };
+  api.capture = (on) => { if (!host) return; host.classList.toggle("capturing", !!on); if (on) { selected = null; renderSelection(); } };
 
   // ---------------------------------------------------------------------------
   // Boot

@@ -23,7 +23,7 @@ They come either as a `<channel source="…annotate" …>` event (normal) or as 
 result of `annotate_pull` / `annotate_wait` (poll mode or safety net). Both have
 the same shape: pages, numbered notes with the user's text and the element under
 the pin (selector, text, React components, source file when known), marks
-(strokes, arrows, boxes, circles) with what they point at, and PNG paths.
+(strokes, arrows, lines, boxes, circles) with what they point at, and PNG paths.
 
 1. `Read` every PNG path listed. Crops first, the full-page overview for context.
 2. Say one short line: what you're going to change.

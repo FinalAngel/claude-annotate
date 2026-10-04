@@ -136,8 +136,7 @@ function assertLocal(url) {
   return u.href;
 }
 
-// The user's tab. Everything happens in it: a second /annotate or a verification screenshot
-// navigates it in place rather than opening another tab.
+// The user's tab. A second /annotate navigates it in place rather than opening another tab.
 async function openUrl(url) {
   url = assertLocal(url);
   const ctx = await ensureBrowser();
@@ -208,7 +207,7 @@ function bboxOf(item) {
     const x = Math.min(...xs), y = Math.min(...ys);
     return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
   }
-  if (s.type === "arrow") {
+  if (s.type === "arrow" || s.type === "line") {
     const x = Math.min(s.x1, s.x2), y = Math.min(s.y1, s.y2);
     return { x, y, w: Math.abs(s.x2 - s.x1), h: Math.abs(s.y2 - s.y1) };
   }
@@ -272,7 +271,7 @@ function fmtCtx(ctx, indent = "") {
 }
 function shapeWord(s) {
   const target = s.ctx ? `<${s.ctx.selector}>${s.ctx.text ? ` "${short(s.ctx.text, 36)}"` : ""}` : "nothing in particular";
-  const verb = { pen: "stroke around", arrow: "arrow →", rect: "box around", ellipse: "circle around" }[s.type] || s.type;
+  const verb = { pen: "stroke around", arrow: "arrow →", line: "line along", rect: "box around", ellipse: "circle around" }[s.type] || s.type;
   return `${s.color} ${verb} ${target}`;
 }
 
@@ -411,7 +410,7 @@ async function clearAll() {
 // ---------------------------------------------------------------------------
 const INSTRUCTIONS = [
   "The 'annotate' channel carries visual feedback the user draws on a live localhost page.",
-  "Events arrive as <channel source=\"...annotate\" batch=\"N\" notes=\"K\" pages=\"P\">: a list of pages, numbered notes (with the user's text, the element under the pin, its React component chain and source when known), marks (strokes, arrows, boxes, circles), and PNG paths.",
+  "Events arrive as <channel source=\"...annotate\" batch=\"N\" notes=\"K\" pages=\"P\">: a list of pages, numbered notes (with the user's text, the element under the pin, its React component chain and source when known), marks (strokes, arrows, lines, boxes, circles), and PNG paths.",
   "When one arrives: Read every PNG path listed (the crops first, the full-page overview for context). Then for each note in order call annotate_progress(note, \"working\"), change the code, and call annotate_progress(note, \"done\", <one short line>) or (note, \"skipped\", <why>). Marks without a note describe what they point at: act on them too. If the dev server hot-reloads you may call annotate_screenshot to check the result. Finish with annotate_done(summary): it shows the summary on the page and removes the temporary screenshots.",
   "Say one short line in the terminal when you start on a batch and one when you finish. The user is watching the page, not the terminal.",
   "If the session was started without the channel flag, nothing is pushed: use annotate_pull after the user says they hit Send, or run the loop with annotate_wait in poll mode.",
@@ -445,7 +444,7 @@ const TOOLS = [
   },
   {
     name: "annotate_screenshot",
-    description: "Take a screenshot of the annotation browser to verify a change. Returns the image inline and the file path. Optional url (navigates first), full (full page), selector (clip to an element), chrome (keep the annotation toolbar visible, off by default).",
+    description: "Take a screenshot of the annotation browser to verify a change. Returns the image inline and the file path. Optional url (rendered in a background tab, the user's tab stays where it is), full (full page), selector (clip to an element), chrome (keep the annotation toolbar visible, off by default).",
     inputSchema: { type: "object", properties: { url: { type: "string" }, full: { type: "boolean" }, selector: { type: "string" }, chrome: { type: "boolean" } } },
   },
   {
@@ -525,7 +524,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return text("shown");
     }
     case "annotate_screenshot": {
-      const page = args.url ? await openUrl(String(args.url)) : (mainPage && !mainPage.isClosed() ? mainPage : null);
+      // A url renders in a tab behind the user's (or reuses one already on it): never navigate the tab they're annotating.
+      const { page, temp } = args.url ? await pageFor(assertLocal(String(args.url))) : { page: mainPage && !mainPage.isClosed() ? mainPage : null, temp: false };
       if (!page) throw new Error("No page open. Pass a url.");
       await fsp.mkdir(SHOTS_DIR, { recursive: true });
       const file = path.join(SHOTS_DIR, `verify-${Date.now()}.png`);
@@ -536,10 +536,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           const el = page.locator(String(args.selector)).first();
           buf = await el.screenshot({ path: file, scale: "css" });
         } else {
-          buf = await page.screenshot({ path: file, fullPage: !!args.full, scale: "css" });
+          buf = await shoot(page, { path: file, fullPage: !!args.full, scale: "css" });
         }
       } finally {
         await page.evaluate(() => window.__claudeAnnotate && window.__claudeAnnotate.capture(false)).catch(() => {});
+        if (temp) await page.close().catch(() => {});
       }
       return { content: [{ type: "text", text: `saved ${file}` }, { type: "image", data: buf.toString("base64"), mimeType: "image/png" }] };
     }

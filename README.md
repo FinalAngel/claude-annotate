@@ -1,10 +1,22 @@
-![annotate](assets/logo.svg#gh-light-mode-only)
-![annotate](assets/logo-dark.svg#gh-dark-mode-only)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img alt="annotate" src="assets/logo.svg">
+  </picture>
+</p>
 
-**Draw on the page. Claude fixes the code.**
-A Claude Code plugin: mark up your running localhost site in the browser, hit *Send to Claude*, and every mark lands in the session that opened the page, with the element, its component and a screenshot under each one.
+<p align="center">
+  <strong>Draw on the page. Claude fixes the code.</strong><br>
+  A Claude Code plugin: mark up your running localhost site in the browser, hit <em>Send to Claude</em>, and every mark lands in the session that opened the page, with the element, its component and a screenshot under each one.
+</p>
 
-[![MIT license](https://img.shields.io/badge/license-MIT-FF4D8D)](LICENSE) ![Node 20 or later](https://img.shields.io/badge/node-%3E%3D20-FF4D8D) ![Two dependencies](https://img.shields.io/badge/dependencies-2-FF4D8D) ![Nothing leaves the machine](https://img.shields.io/badge/cloud-none-FF4D8D) [![CI](https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml/badge.svg)](https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml)
+<p align="center">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-FF4D8D"></a>
+  <img alt="Node 20 or later" src="https://img.shields.io/badge/node-%3E%3D20-FF4D8D">
+  <img alt="Two dependencies" src="https://img.shields.io/badge/dependencies-2-FF4D8D">
+  <img alt="Nothing leaves the machine" src="https://img.shields.io/badge/cloud-none-FF4D8D">
+  <a href="https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/FinalAngel/claude-annotate/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
 ![Demo. In Claude Code, /annotate http://localhost:5180/ opens the pricing page with the toolbar on it. A box, an arrow and a circle are drawn, two notes are typed, Send to Claude is pressed. Back in the terminal the batch arrives as a channel event and Claude reads the crop, edits content.tsx and reports progress per note. On the page the pins turn green with Claude's one-line results and the toolbar says All done.](assets/demo.gif)
 
@@ -21,7 +33,7 @@ claude --dangerously-load-development-channels plugin:annotate@claude-annotate  
 /annotate http://localhost:5180/
 ```
 
-The page opens in its own Chrome window with the tools already on it. Pen, arrow, box, circle, numbered notes. Scroll, click through to other pages, keep marking. One Send. Claude reads the crops, edits the code, and each pin on the page reports back: spinning while Claude works on it, green with a one-line result, grey if skipped. **Clear** wipes it all and you go again.
+The page opens in its own Chrome window with the tools already on it. Pen, arrow, line, box, circle, numbered notes. Scroll, click through to other pages, keep marking. One Send. Claude reads the crops, edits the code, and each pin on the page reports back: spinning while Claude works on it, green with a one-line result, grey if skipped. **Clear** wipes it all and you go again.
 
 ## What Claude receives
 
@@ -68,16 +80,16 @@ Per note that is: your text, the element under the pin with its visible text and
 
 | | |
 |---|---|
-| **Marks** | Pen, arrow, box, circle. Four inks with a dark halo, so they read on light and dark pages. Hold `⇧` for a square or a circle. |
+| **Marks** | Pen, arrow, line, box, circle. Four inks with a dark halo, so they read on light and dark pages. Hold `⇧` for a square or a circle. In Select, drag a mark to move it or its handles to resize it. |
 | **Notes** | `N` then click. Type, `↵`. Numbered across all pages. Click a pin to edit or delete. |
-| **Browse** | `V` or `esc` passes clicks through to the page, so you can open a menu, change route, log in. Pins stay. |
+| **Browse** | The default. `V` or `esc` passes clicks through to the page, so you can open a menu, change route, log in. Pins stay. Pick a tool or press its key to draw. |
 | **Across pages** | Marks are stored per URL. Navigate away and back and they are still there. One Send covers every page. |
 | **Select** | `S`, click a mark to select it, drag to move it, `⌫` to delete. Pins drag in any mode. `⌘Z` and `⇧⌘Z` for undo and redo. |
 | **Send** | `⌘↵` or the button. It counts what hasn't been sent yet, so you can send, keep drawing, send again. |
 | **Progress** | Pin spins: Claude is on that note. Green with a line: done. Grey: skipped, with why. The toolbar shows which file Claude is editing. |
 | **Clear** | Two clicks (the second one says *Sure?*). Removes every mark on every page and the temporary screenshots. |
 
-Keys: `P` pen · `A` arrow · `R` box · `E` circle · `N` note · `S` select · `1` – `4` inks · `V` / `esc` browse · `⌘Z` · `⇧⌘Z` · `⌫` · `⌘↵` send. Drag the toolbar by its grip, it remembers where you put it per site.
+Keys: `P` pen · `A` arrow · `L` line · `R` box · `E` circle · `N` note · `S` select · `1` – `4` inks · `V` / `esc` browse · `⌘Z` · `⇧⌘Z` · `⌫` · `⌘↵` send. Drag the toolbar by its grip, it remembers where you put it per site.
 
 ## Why not paste a screenshot
 
