@@ -80,7 +80,7 @@ Per note that is: your text, the element under the pin with its visible text and
 
 | | |
 |---|---|
-| **Marks** | Pen, arrow, line, box, circle. Four inks with a dark halo, so they read on light and dark pages. Hold `⇧` for a square or a circle. In Select, drag a mark to move it or its handles to resize it. |
+| **Marks** | Pen, arrow, line, box, circle. Four inks with a dark halo, so they read on light and dark pages. Hold `⇧` for a square, a circle, or a line or arrow in 15° steps. In Select, drag a mark to move it or its handles to resize it. |
 | **Notes** | `N` then click. Type, `↵`. Numbered across all pages. Click a pin to edit or delete. |
 | **Browse** | The default. `V` or `esc` passes clicks through to the page, so you can open a menu, change route, log in. Pins stay. Pick a tool or press its key to draw. |
 | **Across pages** | Marks are stored per URL. Navigate away and back and they are still there. One Send covers every page. |

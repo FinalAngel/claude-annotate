@@ -734,9 +734,15 @@ svg.ink g.draft { opacity: .9; }
     if (s.type === "rect" || s.type === "ellipse") return [["nw", s.x, s.y], ["ne", s.x + s.w, s.y], ["sw", s.x, s.y + s.h], ["se", s.x + s.w, s.y + s.h]];
     return []; // pen strokes only move
   }
+  // ⇧ on a line or arrow: the free end snaps to 15° steps around the fixed one, keeping its length
+  function snap15(ax, ay, x, y) {
+    const len = Math.hypot(x - ax, y - ay), step = Math.PI / 12;
+    const a = Math.round(Math.atan2(y - ay, x - ax) / step) * step;
+    return [Math.round(ax + Math.cos(a) * len), Math.round(ay + Math.sin(a) * len)];
+  }
   function resizeShape(s, o, h, x, y, square) {
-    if (h === "p1") { s.x1 = x; s.y1 = y; return; }
-    if (h === "p2") { s.x2 = x; s.y2 = y; return; }
+    if (h === "p1") { [s.x1, s.y1] = square ? snap15(o.x2, o.y2, x, y) : [x, y]; return; }
+    if (h === "p2") { [s.x2, s.y2] = square ? snap15(o.x1, o.y1, x, y) : [x, y]; return; }
     const ax = h.includes("w") ? o.x + o.w : o.x, ay = h.includes("n") ? o.y + o.h : o.y; // the opposite corner stays put
     let w = Math.max(8, Math.abs(x - ax)), hh = Math.max(8, Math.abs(y - ay));
     if (square) w = hh = Math.max(w, hh);
@@ -1020,7 +1026,7 @@ svg.ink g.draft { opacity: .9; }
     if (draft.type === "pen") {
       const l = draft.points[draft.points.length - 1];
       if (Math.hypot(x - l[0], y - l[1]) >= 2.5) draft.points.push([x, y]);
-    } else if (draft.type === "arrow" || draft.type === "line") { draft.x2 = x; draft.y2 = y; }
+    } else if (draft.type === "arrow" || draft.type === "line") { [draft.x2, draft.y2] = e.shiftKey ? snap15(draft.x1, draft.y1, x, y) : [x, y]; }
     else {
       draft.x = Math.min(draft._ox, x); draft.y = Math.min(draft._oy, y);
       draft.w = Math.abs(x - draft._ox); draft.h = Math.abs(y - draft._oy);
