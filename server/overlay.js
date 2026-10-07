@@ -176,6 +176,8 @@ svg.ink g.draft { opacity: .9; }
   box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 0 0 1px rgba(255,255,255,.07), 0 24px 60px -24px rgba(0,0,0,.7);
   animation: rise .35s cubic-bezier(.2,.8,.2,1) both; user-select: none; -webkit-user-select: none;
 }
+.bar { width: max-content; } /* left: 50% would otherwise give it half the viewport and squeeze the buttons */
+.bar > * { flex-shrink: 0; }
 .bar.dragging { transition: none; }
 .bar .grip { color: rgba(244,241,247,.35); cursor: grab; padding: 0 2px 0 4px; display: grid; place-items: center; }
 .bar .grip:active { cursor: grabbing; }
@@ -211,7 +213,7 @@ svg.ink g.draft { opacity: .9; }
 .inkb:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 .send {
-  height: 36px; padding: 0 6px 0 14px; margin-left: 2px; border: 0; border-radius: 999px; display: flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 14px; margin-left: 2px; border: 0; border-radius: 999px; display: flex; align-items: center; gap: 8px;
   background: var(--ink); color: var(--ink-dark); cursor: pointer; font: 600 13px/1 inherit; font-family: inherit; letter-spacing: .005em;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.35); transition: transform .15s cubic-bezier(.2,.8,.2,1), filter .15s, background .3s, color .3s;
 }
@@ -219,7 +221,7 @@ svg.ink g.draft { opacity: .9; }
 .send:active { transform: scale(.96); }
 .send:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .send:disabled { cursor: default; filter: saturate(.6); opacity: .85; }
-.send:has(.cnt) { padding-right: 6px; }
+.send:has(.cnt):not(.sending, .sent) { padding-right: 6px; } /* tight against the count bubble, which sending/sent hide */
 .send .cnt { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 999px; display: grid; place-items: center; background: rgba(20,17,26,.9); color: #F4F1F7; font-weight: 700; font-variant-numeric: tabular-nums; transition: transform .2s cubic-bezier(.34,1.56,.64,1); }
 .send .cnt.bump { animation: bump .35s cubic-bezier(.34,1.56,.64,1); }
 .send .cnt .ic { display: none; }
@@ -250,7 +252,7 @@ svg.ink g.draft { opacity: .9; }
 .toast .ic { flex: none; margin-top: 1px; color: var(--ink); }
 .toast.ok .ic { color: #4ADE80; }
 
-.pop { position: fixed; width: 292px; padding: 10px 10px 8px; border-radius: 14px; background: rgba(20,17,26,.92); color: #F4F1F7;
+.pop { position: fixed; width: min(292px, calc(100vw - 24px)); padding: 10px 10px 8px; border-radius: 14px; background: rgba(20,17,26,.92); color: #F4F1F7;
   backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 0 1px rgba(255,255,255,.08), 0 24px 60px -20px rgba(0,0,0,.75);
   transform-origin: var(--ox, 0) var(--oy, 0); animation: popin .22s cubic-bezier(.34,1.56,.64,1) both; }
@@ -290,6 +292,14 @@ svg.ink g.draft { opacity: .9; }
 @keyframes glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,138,138,0); } 50% { box-shadow: 0 0 0 4px rgba(255,138,138,.35); } }
 @keyframes wiggle { 0% { transform: none; } 30% { transform: translateY(-6px) scale(1.12); } 60% { transform: translateY(0) scale(.96); } 100% { transform: none; } }
 .pin .dot.wiggle { animation: wiggle .5s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes riseN { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* Narrow windows: the bar wraps into rows, centred and inside the viewport. Keep 720 in sync with NARROW. */
+@media (max-width: 720px) {
+  .bar { left: 8px; right: 8px; bottom: 8px; width: fit-content; max-width: calc(100vw - 16px); margin: 0 auto; transform: none; animation-name: riseN;
+    flex-wrap: wrap; justify-content: center; row-gap: 4px; border-radius: 24px; }
+  .bar .grip, .bar .sep { display: none; }
+  .ticker { bottom: 108px; max-width: calc(100vw - 24px); overflow: hidden; text-overflow: ellipsis; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 `;
 
@@ -671,7 +681,7 @@ svg.ink g.draft { opacity: .9; }
   function placePopover() {
     if (!popNote || popover.classList.contains("hidden")) return;
     const px = popNote.x - scrollX, py = popNote.y - scrollY;
-    const w = 292, h = popover.offsetHeight || 150;
+    const w = popover.offsetWidth || 292, h = popover.offsetHeight || 150;
     let left = px + 24, top = py - 14;
     let ox = "0", oy = "0";
     if (left + w > innerWidth - 12) { left = px - 24 - w; ox = "100%"; }
@@ -835,7 +845,9 @@ svg.ink g.draft { opacity: .9; }
   // Toolbar position (draggable, remembered per origin)
   // ---------------------------------------------------------------------------
   const POS_KEY = "claude-annotate:bar";
+  const NARROW = matchMedia("(max-width: 720px)"); // the CSS lays the bar out there; no dragging
   function restoreBarPos() {
+    if (NARROW.matches) { bar.removeAttribute("style"); return; }
     try {
       const p = JSON.parse(localStorage.getItem(POS_KEY) || "null");
       if (p && typeof p.x === "number") placeBar(p.x, p.y);
@@ -936,7 +948,7 @@ svg.ink g.draft { opacity: .9; }
 
     // Keep things aligned
     window.addEventListener("scroll", placePopover, { passive: true });
-    window.addEventListener("resize", () => { sizeDoc(); placePopover(); }, { passive: true });
+    window.addEventListener("resize", () => { sizeDoc(); placePopover(); restoreBarPos(); }, { passive: true });
     const ro = new ResizeObserver(() => sizeDoc());
     ro.observe(document.documentElement);
     if (document.body) ro.observe(document.body);
